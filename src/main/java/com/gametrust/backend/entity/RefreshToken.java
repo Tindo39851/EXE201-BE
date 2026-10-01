@@ -1,41 +1,34 @@
 package com.gametrust.backend.entity;
 
-import jakarta.persistence.*;
+import org.springframework.data.annotation.Id;
+import org.springframework.data.mongodb.core.index.Indexed;
+import org.springframework.data.mongodb.core.mapping.Document;
 import java.time.Instant;
-import java.util.UUID;
 
-@Entity
-@Table(name = "refresh_tokens", indexes = {
-    @Index(name = "idx_refresh_token_token", columnList = "token")
-})
+@Document(collection = "refresh_tokens")
 public class RefreshToken {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.UUID)
-    @Column(name = "id", updatable = false, nullable = false)
-    private UUID id;
+    private String id;
 
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "user_id", nullable = false)
-    private User user;
+    @Indexed
+    private String userId;
 
-    @Column(name = "token", nullable = false, unique = true, length = 512)
+    @Indexed(unique = true)
     private String token;
 
-    @Column(name = "expires_at", nullable = false)
+    @Indexed(expireAfter = "0s")
     private Instant expiresAt;
 
-    @Column(name = "revoked", nullable = false)
     private boolean revoked = false;
 
-    @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt = Instant.now();
 
     public RefreshToken() {
     }
 
-    public RefreshToken(User user, String token, Instant expiresAt) {
-        this.user = user;
+    public RefreshToken(String userId, String token, Instant expiresAt) {
+        this.userId = userId;
         this.token = token;
         this.expiresAt = expiresAt;
         this.revoked = false;
@@ -50,20 +43,20 @@ public class RefreshToken {
         return !revoked && !isExpired();
     }
 
-    public UUID getId() {
+    public String getId() {
         return id;
     }
 
-    public void setId(UUID id) {
+    public void setId(String id) {
         this.id = id;
     }
 
-    public User getUser() {
-        return user;
+    public String getUserId() {
+        return userId;
     }
 
-    public void setUser(User user) {
-        this.user = user;
+    public void setUserId(String userId) {
+        this.userId = userId;
     }
 
     public String getToken() {

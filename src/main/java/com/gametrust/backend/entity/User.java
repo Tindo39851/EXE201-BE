@@ -1,44 +1,40 @@
 package com.gametrust.backend.entity;
 
-import jakarta.persistence.*;
+import org.springframework.data.annotation.Id;
+import org.springframework.data.mongodb.core.index.Indexed;
+import org.springframework.data.mongodb.core.mapping.Document;
+import org.springframework.data.mongodb.core.mapping.Field;
 import java.time.Instant;
-import java.util.UUID;
 
-@Entity
-@Table(name = "users")
+@Document(collection = "users")
 public class User {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.UUID)
-    @Column(name = "id", updatable = false, nullable = false)
-    private UUID id;
+    private String id;
 
-    @Column(name = "username", nullable = false, unique = true, length = 50)
+    @Indexed(unique = true)
     private String username;
 
-    @Column(name = "email", nullable = false, unique = true, length = 100)
+    @Indexed(unique = true)
     private String email;
 
-    @Column(name = "password", nullable = false)
     private String password;
 
-    @Enumerated(EnumType.STRING)
-    @Column(name = "role", nullable = false, length = 20)
     private Role role = Role.MEMBER;
 
-    @Column(name = "is_active", nullable = false)
+    @Field("isActive")
     private boolean isActive = true;
 
-    @Column(name = "reputation_score", nullable = false)
+    @Field("reputationScore")
     private int reputationScore = 100;
 
-    @Column(name = "avatar_url")
+    @Field("avatarUrl")
     private String avatarUrl;
 
-    @Column(name = "created_at", nullable = false, updatable = false)
+    @Field("createdAt")
     private Instant createdAt = Instant.now();
 
-    @Column(name = "updated_at", nullable = false)
+    @Field("updatedAt")
     private Instant updatedAt = Instant.now();
 
     public User() {
@@ -55,16 +51,15 @@ public class User {
         this.updatedAt = Instant.now();
     }
 
-    @PreUpdate
-    public void onPreUpdate() {
+    public void touch() {
         this.updatedAt = Instant.now();
     }
 
-    public UUID getId() {
+    public String getId() {
         return id;
     }
 
-    public void setId(UUID id) {
+    public void setId(String id) {
         this.id = id;
     }
 

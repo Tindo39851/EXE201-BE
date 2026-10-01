@@ -15,7 +15,6 @@ import com.gametrust.backend.service.AuthService;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.HashMap;
@@ -41,7 +40,6 @@ public class AuthServiceImpl implements AuthService {
     }
 
     @Override
-    @Transactional
     public AuthResponse register(RegisterRequest request) {
         String cleanEmail = request.getEmail().trim().toLowerCase();
         String cleanUsername = request.getUsername().trim();
@@ -67,7 +65,6 @@ public class AuthServiceImpl implements AuthService {
     }
 
     @Override
-    @Transactional
     public AuthResponse login(LoginRequest request) {
         String identifier = request.getEmailOrUsername().trim();
 
@@ -86,7 +83,6 @@ public class AuthServiceImpl implements AuthService {
     }
 
     @Override
-    @Transactional
     public AuthResponse refreshToken(RefreshTokenRequest request) {
         String tokenStr = request.getRefreshToken();
 
@@ -98,7 +94,8 @@ public class AuthServiceImpl implements AuthService {
             throw new UnauthorizedException("Refresh token has expired or been revoked");
         }
 
-        User user = refreshToken.getUser();
+        User user = userRepository.findById(refreshToken.getUserId())
+                .orElseThrow(() -> new UnauthorizedException("Refresh token user no longer exists"));
         if (!user.isActive()) {
             throw new UnauthorizedException("Account is inactive");
         }
@@ -111,7 +108,6 @@ public class AuthServiceImpl implements AuthService {
     }
 
     @Override
-    @Transactional
     public void logout(String refreshTokenStr) {
         if (refreshTokenStr != null && !refreshTokenStr.isBlank()) {
             refreshTokenRepository.findByToken(refreshTokenStr)
@@ -123,7 +119,6 @@ public class AuthServiceImpl implements AuthService {
     }
 
     @Override
-    @Transactional(readOnly = true)
     public UserResponse getCurrentUser(String username) {
         User user = userRepository.findByUsername(username)
                 .or(() -> userRepository.findByEmail(username))
@@ -145,7 +140,7 @@ public class AuthServiceImpl implements AuthService {
 
         // Store refresh token with expiry
         Instant expiresAt = Instant.now().plusMillis(jwtService.getRefreshExpiration());
-        RefreshToken refreshToken = new RefreshToken(user, refreshTokenString, expiresAt);
+        RefreshToken refreshToken = new RefreshToken(user.getId(), refreshTokenString, expiresAt);
         refreshTokenRepository.save(refreshToken);
 
         return new AuthResponse(

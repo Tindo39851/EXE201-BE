@@ -7,18 +7,17 @@ import org.springframework.security.core.userdetails.UserDetails;
 
 import java.util.Collection;
 import java.util.Collections;
-import java.util.UUID;
 
 public class UserPrincipal implements UserDetails {
 
-    private final UUID id;
+    private final String id;
     private final String username;
     private final String email;
     private final String password;
     private final boolean active;
     private final Collection<? extends GrantedAuthority> authorities;
 
-    public UserPrincipal(UUID id, String username, String email, String password, boolean active,
+    public UserPrincipal(String id, String username, String email, String password, boolean active,
                          Collection<? extends GrantedAuthority> authorities) {
         this.id = id;
         this.username = username;
@@ -40,7 +39,7 @@ public class UserPrincipal implements UserDetails {
         );
     }
 
-    public UUID getId() {
+    public String getId() {
         return id;
     }
 

@@ -20,7 +20,6 @@ import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
 import java.util.Optional;
-import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -49,7 +48,7 @@ class AuthServiceTest {
     @BeforeEach
     void setUp() {
         sampleUser = new User("pro_gamer", "gamer@gametrust.gg", "encoded_password", Role.MEMBER);
-        sampleUser.setId(UUID.randomUUID());
+        sampleUser.setId("66fdb9c110b4e62a8a11f001");
     }
 
     @Test

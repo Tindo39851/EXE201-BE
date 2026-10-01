@@ -12,6 +12,8 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.http.HttpMethod;
+import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -42,13 +44,32 @@ public class SecurityConfig {
                 .csrf(AbstractHttpConfigurer::disable)
                 .cors(Customizer.withDefaults())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .exceptionHandling(exceptions -> exceptions
+                        .authenticationEntryPoint((request, response, exception) -> {
+                            response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                            response.setContentType("application/json");
+                            response.getWriter().write("{\"status\":401,\"message\":\"Authentication required\"}");
+                        })
+                        .accessDeniedHandler((request, response, exception) -> {
+                            response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+                            response.setContentType("application/json");
+                            response.getWriter().write("{\"status\":403,\"message\":\"Access denied\"}");
+                        }))
                 .authorizeHttpRequests(auth -> auth
                         // Public authentication endpoints
                         .requestMatchers(
                                 "/api/auth/register",
                                 "/api/auth/login",
                                 "/api/auth/refresh-token",
-                                "/api/auth/refresh"
+                                "/api/auth/refresh",
+                                "/api/auth/logout"
+                        ).permitAll()
+                        .requestMatchers(HttpMethod.GET,
+                                "/api/squads/**",
+                                "/api/tournaments/**",
+                                "/api/clans/**",
+                                "/api/reputation/**",
+                                "/api/social/**"
                         ).permitAll()
                         // Swagger OpenAPI documentation
                         .requestMatchers(

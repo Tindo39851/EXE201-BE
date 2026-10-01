@@ -14,6 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.UUID;
 import java.util.function.Function;
 
 @Service
@@ -69,6 +70,7 @@ public class JwtService {
         return Jwts.builder()
                 .claims(extraClaims)
                 .subject(subject)
+                .id(UUID.randomUUID().toString())
                 .issuer(issuer)
                 .issuedAt(now)
                 .expiration(expiryDate)

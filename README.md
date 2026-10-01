@@ -1,119 +1,191 @@
-# GameTrust Backend — Authentication & Authorization Service
+# GameTrust Backend API
 
-Backend REST API for **GameTrust** (Esports Matchmaking & Gamer Social Network Platform), built with **Spring Boot 3.3.4**, **Spring Security 6**, and **JJWT 0.12.6** implementing a strict **3-Layer Architecture**.
+Spring Boot backend for the GameTrust gamer matchmaking and social platform. The service exposes authentication, role-based authorization, squad matchmaking, tournaments, clans, reputation, and social APIs. All persistent data is stored in MongoDB.
 
----
+## Stack
 
-## 🏛️ 3-Layer Architecture
+- Java 17-compatible source (verified on Java 24)
+- Spring Boot 3.3.4
+- Spring Security 6 with stateless JWT authentication
+- Spring Data MongoDB
+- JJWT 0.12.6
+- Springdoc OpenAPI / Swagger UI
+- JUnit 5 and Mockito
 
-```text
-Controller (HTTP endpoints, validation, response format)
-    ↓
-Service (Business logic, JWT generation, password encryption)
-    ↓
-Repository (Spring Data JPA, database queries)
-    ↓
-Database (PostgreSQL / H2)
-```
-
-### Directory Structure
+## Architecture
 
 ```text
-D:\Code\EXE\BE\
-├── pom.xml
-├── README.md
-└── src/
-    ├── main/
-    │   ├── java/com/gametrust/backend/
-    │   │   ├── GameTrustApplication.java
-    │   │   ├── config/
-    │   │   │   └── OpenApiConfig.java
-    │   │   ├── controller/
-    │   │   │   └── AuthController.java
-    │   │   ├── dto/
-    │   │   │   ├── auth/
-    │   │   │   │   ├── AuthResponse.java
-    │   │   │   │   ├── LoginRequest.java
-    │   │   │   │   ├── RefreshTokenRequest.java
-    │   │   │   │   ├── RegisterRequest.java
-    │   │   │   │   └── UserResponse.java
-    │   │   │   └── common/
-    │   │   │       ├── ApiResponse.java
-    │   │   │       └── ErrorResponse.java
-    │   │   ├── entity/
-    │   │   │   ├── RefreshToken.java
-    │   │   │   ├── Role.java (MEMBER, MODERATOR, ADMIN)
-    │   │   │   └── User.java
-    │   │   ├── exception/
-    │   │   │   ├── AppException.java
-    │   │   │   ├── BadRequestException.java
-    │   │   │   ├── GlobalExceptionHandler.java
-    │   │   │   ├── ResourceNotFoundException.java
-    │   │   │   └── UnauthorizedException.java
-    │   │   ├── repository/
-    │   │   │   ├── RefreshTokenRepository.java
-    │   │   │   └── UserRepository.java
-    │   │   ├── security/
-    │   │   │   ├── JwtAuthenticationFilter.java
-    │   │   │   ├── JwtService.java
-    │   │   │   ├── SecurityConfig.java
-    │   │   │   ├── UserDetailsServiceImpl.java
-    │   │   │   └── UserPrincipal.java
-    │   │   └── service/
-    │   │       ├── AuthService.java
-    │   │       └── impl/
-    │   │           └── AuthServiceImpl.java
-    │   └── resources/
-    │       └── application.yml
-    └── test/
-        └── java/com/gametrust/backend/
-            └── service/
-                └── AuthServiceTest.java
+Controller -> Service -> MongoRepository / MongoTemplate -> MongoDB
+                  |
+                  -> JWT + BCrypt security services
 ```
 
----
+API responses use this envelope:
 
-## 🚀 API Endpoints
+```json
+{
+  "success": true,
+  "message": "Operation successful",
+  "data": {},
+  "timestamp": "2026-10-01T00:00:00Z"
+}
+```
 
-Base URL: `http://localhost:5000`
+## Run locally
 
-| Method | Endpoint | Description | Auth Required |
-|---|---|---|---|
-| `POST` | `/api/auth/register` | Register new gamer account (default role: `MEMBER`) | No |
-| `POST` | `/api/auth/login` | Log in with username/email & password | No |
-| `POST` | `/api/auth/refresh-token` | Rotate refresh token and get a new access token | No |
-| `POST` | `/api/auth/logout` | Revoke refresh token | No |
-| `GET` | `/api/auth/me` | Get currently authenticated gamer profile | Yes (Bearer JWT) |
+Requirements: Java 17+, Maven 3.9+, and MongoDB on port `27017`.
 
-### 📖 Swagger OpenAPI Documentation
-Once the server is running, explore interactive Swagger UI at:
-👉 **`http://localhost:5000/swagger-ui.html`**
+```powershell
+mvn.cmd test
+mvn.cmd spring-boot:run
+```
 
----
+If `spring-boot:run` cannot resolve the main class from a Windows path containing Unicode characters, package and run the executable JAR:
 
-## ⚙️ Configuration & Environment Variables
+```powershell
+mvn.cmd package
+java -jar .\target\backend-0.0.1-SNAPSHOT.jar
+```
 
-| Variable | Default Value | Description |
+- API base URL: `http://localhost:5000/api`
+- Swagger UI: `http://localhost:5000/swagger-ui.html`
+- OpenAPI JSON: `http://localhost:5000/v3/api-docs`
+
+The first startup seeds demo platform data and two local accounts:
+
+| Role | Username | Password |
 |---|---|---|
-| `PORT` | `5000` | HTTP Server port |
-| `DATABASE_URL` | `jdbc:postgresql://localhost:5432/gametrust` | PostgreSQL JDBC connection URL |
-| `DATABASE_USERNAME` | `postgres` | Database username |
-| `DATABASE_PASSWORD` | `postgres` | Database password |
-| `JWT_SECRET` | `404E63526655...` | 256-bit secret key for HMAC SHA |
-| `JWT_EXPIRATION` | `900000` (15 mins) | Access token validity in ms |
-| `JWT_REFRESH_EXPIRATION` | `604800000` (7 days) | Refresh token validity in ms |
+| MEMBER | `demo` | `Demo123!` |
+| ADMIN | `admin` | `Admin123!` |
 
----
+Change or remove these development credentials before deployment.
 
-## 🛠️ How to Run
+## Environment variables
 
-### In IntelliJ IDEA / Eclipse / VS Code:
-1. Open folder `D:\Code\EXE\BE` as a Maven project.
-2. Select Java 17 or higher SDK.
-3. Run `GameTrustApplication.java`.
+| Variable | Default | Purpose |
+|---|---|---|
+| `MONGODB_URI` | `mongodb://localhost:27017/gametrust` | MongoDB connection and database |
+| `JWT_SECRET` | local development key | HMAC signing key; replace in production |
+| `JWT_EXPIRATION` | `900000` | Access-token lifetime in milliseconds |
+| `JWT_REFRESH_EXPIRATION` | `604800000` | Refresh-token lifetime in milliseconds |
 
-### In Terminal (with Maven installed):
-```bash
-mvn clean test
-mvn spring-boot:run
+## Authentication and authorization
+
+Access tokens are sent as `Authorization: Bearer <accessToken>`. Each access and refresh token has a random JWT ID (`jti`) so token rotation cannot generate duplicate MongoDB keys.
+
+- Registration creates a `MEMBER`, BCrypt-hashes the password, and returns an access/refresh pair.
+- Login accepts either username or email.
+- Refresh performs rotation: the supplied token is revoked and a new access/refresh pair is returned.
+- Logout revokes the supplied refresh token.
+- Protected feature mutations require any authenticated role.
+- `/api/admin/**` requires `ROLE_ADMIN`; a member receives `403`.
+- Missing/invalid authentication on protected routes receives `401`.
+
+### Authentication APIs
+
+| Method | Endpoint | Access | Behavior |
+|---|---|---|---|
+| POST | `/api/auth/register` | Public | Create member and return tokens + profile |
+| POST | `/api/auth/login` | Public | Authenticate username/email and password |
+| POST | `/api/auth/refresh-token` | Public | Rotate a valid refresh token |
+| POST | `/api/auth/refresh` | Public | Alias of refresh-token |
+| POST | `/api/auth/logout` | Public | Revoke the supplied refresh token |
+| GET | `/api/auth/me` | Bearer token | Return the current user profile |
+| GET | `/api/admin/users` | ADMIN | List user profiles; verifies role authorization |
+
+Example login:
+
+```json
+POST /api/auth/login
+{
+  "emailOrUsername": "demo",
+  "password": "Demo123!"
+}
 ```
+
+## Feature APIs
+
+### Squad Finder
+
+| Method | Endpoint | Access | Behavior |
+|---|---|---|---|
+| GET | `/api/squads/players` | Public | List players; optional `game`, `rank`, `role`, `region`, `micRequired` filters |
+| POST | `/api/squads/matchmake` | Authenticated | Create and persist a matched lobby |
+| POST | `/api/squads/invite/{playerId}` | Authenticated | Persist a pending player invitation |
+
+Matchmaking request:
+
+```json
+{
+  "gameId": "VAL",
+  "primaryRole": "Duelist",
+  "rank": "Diamond",
+  "region": "SEA",
+  "neededRoles": ["Controller", "Sentinel"],
+  "micRequired": true
+}
+```
+
+### Tournaments
+
+| Method | Endpoint | Access | Behavior |
+|---|---|---|---|
+| GET | `/api/tournaments` | Public | List tournaments; optional `status` and `game` filters |
+| GET | `/api/tournaments/{id}` | Public | Get tournament details |
+| GET | `/api/tournaments/{id}/bracket` | Public | Get bracket nodes |
+| POST | `/api/tournaments/{id}/register` | Authenticated | Persist team registration with team name and Discord captain |
+
+Registration body:
+
+```json
+{
+  "teamName": "CYBER PROTOCOL ELITE",
+  "captainDiscord": "Captain#1337"
+}
+```
+
+### Clans
+
+| Method | Endpoint | Access | Behavior |
+|---|---|---|---|
+| GET | `/api/clans` | Public | List clans; optional `tier` and `region` filters |
+| GET | `/api/clans/{id}` | Public | Get one clan |
+| POST | `/api/clans/{id}/join-request` | Authenticated | Persist a pending membership request |
+
+### Reputation
+
+| Method | Endpoint | Access | Behavior |
+|---|---|---|---|
+| GET | `/api/reputation/metrics` | Public | Platform reputation and health metrics |
+| GET | `/api/reputation/reports` | Public | Moderation report feed used by the current UI |
+| GET | `/api/reputation/reviews` | Public | Player reviews |
+| GET | `/api/reputation/top-players` | Public | Reputation leaderboard |
+
+### Social network
+
+| Method | Endpoint | Access | Behavior |
+|---|---|---|---|
+| GET | `/api/social/feed` | Public | List posts; optional `category` filter |
+| POST | `/api/social/posts` | Authenticated | Persist a post attributed to the JWT user |
+| POST | `/api/social/posts/{id}/like` | Authenticated | Toggle like and persist the count |
+| GET | `/api/social/online-players` | Public | List currently advertised online players |
+| GET | `/api/social/trending-tags` | Public | List trending tags |
+
+## MongoDB collections
+
+The `gametrust` database contains:
+
+- Security: `users`, `refresh_tokens`
+- Squad: `player_profiles`, `matchmaking_sessions`, `player_invites`
+- Tournament: `tournaments`, `tournament_brackets`, `tournament_registrations`
+- Clan: `clans`, `clan_join_requests`
+- Reputation: `reputation_metrics`, `reputation_reports`, `reputation_reviews`, `top_rep_players`
+- Social: `social_posts`, `online_players`, `trending_tags`
+
+Unique MongoDB indexes protect `users.username`, `users.email`, and `refresh_tokens.token`. Refresh-token documents also have a TTL index on `expiresAt`.
+
+## Verification performed
+
+- `mvn.cmd test`: 4 authentication service tests pass.
+- `mvn.cmd package`: executable JAR builds successfully.
+- Live MongoDB checks covered login, `/me`, public feature reads, protected mutations, member rejection from admin API, admin access, refresh rotation, old-token rejection, and logout revocation.

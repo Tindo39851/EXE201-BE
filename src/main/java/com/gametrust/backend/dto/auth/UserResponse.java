@@ -4,11 +4,10 @@ import com.gametrust.backend.entity.Role;
 import com.gametrust.backend.entity.User;
 
 import java.time.Instant;
-import java.util.UUID;
 
 public class UserResponse {
 
-    private UUID id;
+    private String id;
     private String username;
     private String email;
     private Role role;
@@ -19,7 +18,7 @@ public class UserResponse {
     public UserResponse() {
     }
 
-    public UserResponse(UUID id, String username, String email, Role role, int reputationScore, String avatarUrl, Instant createdAt) {
+    public UserResponse(String id, String username, String email, Role role, int reputationScore, String avatarUrl, Instant createdAt) {
         this.id = id;
         this.username = username;
         this.email = email;
@@ -44,11 +43,11 @@ public class UserResponse {
         );
     }
 
-    public UUID getId() {
+    public String getId() {
         return id;
     }
 
-    public void setId(UUID id) {
+    public void setId(String id) {
         this.id = id;
     }
 
