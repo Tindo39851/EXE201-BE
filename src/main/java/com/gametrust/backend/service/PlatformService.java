@@ -189,6 +189,12 @@ public class PlatformService {
             throw new BadRequestException("Giải đấu đã ở trạng thái " + status + " và không còn tiếp nhận đăng ký mới.");
         }
 
+        int maxTeams = tournament.getInteger("maxTeams", 16);
+        int currentRegistered = tournament.getInteger("registeredTeams", 0);
+        if (currentRegistered >= maxTeams) {
+            throw new BadRequestException("Giải đấu đã đạt giới hạn tối đa số đội tham gia (" + maxTeams + " đội).");
+        }
+
         mongoTemplate.insert(doc(
                 "tournamentId", tournamentId,
                 "teamName", request.teamName(),
@@ -197,6 +203,12 @@ public class PlatformService {
                 "status", "CONFIRMED",
                 "createdAt", Instant.now()
         ), "tournament_registrations");
+
+        int updatedCount = currentRegistered + 1;
+        Query tq = Query.query(Criteria.where("id").is(tournamentId));
+        Update tu = new Update().set("registeredTeams", updatedCount).set("teams", updatedCount + " / " + maxTeams);
+        mongoTemplate.updateFirst(tq, tu, "tournaments");
+
         return doc("success", true, "message", "Squad successfully registered for tournament");
     }
 
@@ -275,7 +287,7 @@ public class PlatformService {
     }
 
     public Map<String, Object> createReport(CreateReportRequest request, String reporter) {
-        String id = "#RPT_" + (1000 + (int) (Math.random() * 9000));
+        String id = "#RPT_" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
         String type = request.type().trim().toUpperCase();
         String badgeColor = "TOXICITY".equals(type) || "CHEATING".equals(type) ? "red" : "yellow";
 
@@ -301,7 +313,7 @@ public class PlatformService {
 
         if ("BAN".equalsIgnoreCase(action)) {
             Query uq = Query.query(Criteria.where("username").regex("^" + Pattern.quote(reportedUser) + "$", "i"));
-            mongoTemplate.updateFirst(uq, new Update().set("active", false), "users");
+            mongoTemplate.updateFirst(uq, new Update().set("isActive", false).set("active", false), "users");
             resolutionNote = "Account Suspended";
         } else {
             // Default: Deduct 20 REP

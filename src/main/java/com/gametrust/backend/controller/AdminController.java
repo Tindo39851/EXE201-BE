@@ -3,6 +3,7 @@ package com.gametrust.backend.controller;
 import com.gametrust.backend.dto.auth.UserResponse;
 import com.gametrust.backend.dto.common.ApiResponse;
 import com.gametrust.backend.entity.User;
+import com.gametrust.backend.exception.BadRequestException;
 import com.gametrust.backend.exception.ResourceNotFoundException;
 import com.gametrust.backend.repository.UserRepository;
 import com.gametrust.backend.service.PlatformService;
@@ -115,15 +116,19 @@ public class AdminController {
             @RequestBody Map<String, String> body) {
         User user = userRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
-        String roleStr = body.getOrDefault("role", "MEMBER").toUpperCase();
+        if (body == null || !body.containsKey("role") || body.get("role") == null || body.get("role").isBlank()) {
+            throw new BadRequestException("Role is required");
+        }
+        String roleStr = body.get("role").trim().toUpperCase();
+        if ("MOD".equals(roleStr)) {
+            roleStr = "MODERATOR";
+        }
         try {
             user.setRole(com.gametrust.backend.entity.Role.valueOf(roleStr));
             user.touch();
             userRepository.save(user);
         } catch (IllegalArgumentException e) {
-            user.setRole(com.gametrust.backend.entity.Role.MEMBER);
-            user.touch();
-            userRepository.save(user);
+            throw new BadRequestException("Invalid role '" + roleStr + "'. Permitted values: MEMBER, MODERATOR, ADMIN");
         }
         return ApiResponse.success("Role updated successfully", UserResponse.fromUser(user));
     }
