@@ -20,6 +20,10 @@ import java.time.Instant;
 @Component
 public class DatabaseSeeder implements CommandLineRunner {
 
+    private static final List<String> COMMUNITY_GAME_IDS = List.of(
+            "free-fire", "league-of-legends", "lien-quan", "valorant"
+    );
+
     private final MongoTemplate mongoTemplate;
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
@@ -145,20 +149,26 @@ public class DatabaseSeeder implements CommandLineRunner {
                 .orElse("system");
         List<Document> games = List.of(
                 d("id", "valorant", "name", "Valorant", "shortName", "VAL"),
-                d("id", "cs2", "name", "Counter-Strike 2", "shortName", "CS2"),
                 d("id", "league-of-legends", "name", "League of Legends", "shortName", "LOL"),
-                d("id", "apex-legends", "name", "Apex Legends", "shortName", "APEX"),
-                d("id", "lien-quan", "name", "Liên Quân Mobile", "shortName", "AOV"),
-                d("id", "free-fire", "name", "Free Fire", "shortName", "FF"),
-                d("id", "overwatch-2", "name", "Overwatch 2", "shortName", "OW2"),
-                d("id", "fortnite", "name", "Fortnite", "shortName", "FN")
+                d("id", "lien-quan", "name", "Liên Quân", "shortName", "AOV"),
+                d("id", "free-fire", "name", "Free Fire", "shortName", "FF")
         );
+
+        removeUnsupportedCommunityGames();
 
         for (Document game : games) {
             String gameId = game.getString("id");
             if (!mongoTemplate.exists(Query.query(Criteria.where("id").is(gameId)), "game_hubs")) {
                 game.append("ownerId", adminId).append("createdAt", Instant.now());
                 mongoTemplate.insert(game, "game_hubs");
+            } else {
+                mongoTemplate.updateFirst(
+                        Query.query(Criteria.where("id").is(gameId)),
+                        new Update()
+                                .set("name", game.getString("name"))
+                                .set("shortName", game.getString("shortName")),
+                        "game_hubs"
+                );
             }
             seedDefaultChannel(gameId + "_general", gameId, "general", "general", "TEXT", adminId, 1, null);
             seedDefaultChannel(gameId + "_voice_1", gameId, "Squad Room 1", "squad-room-1", "VOICE", adminId, 2, 10);
@@ -178,6 +188,24 @@ public class DatabaseSeeder implements CommandLineRunner {
                 new Index().on("roomId", Sort.Direction.ASC).on("userId", Sort.Direction.ASC).unique());
         mongoTemplate.indexOps("voice_session_audit").ensureIndex(
                 new Index().on("roomId", Sort.Direction.ASC).on("userId", Sort.Direction.ASC).on("joinedAt", Sort.Direction.DESC));
+    }
+
+    private void removeUnsupportedCommunityGames() {
+        Query unsupportedChannels = Query.query(Criteria.where("gameId").nin(COMMUNITY_GAME_IDS));
+        List<String> channelIds = mongoTemplate
+                .find(unsupportedChannels, Document.class, "community_channels")
+                .stream()
+                .map(channel -> channel.getString("id"))
+                .filter(id -> id != null && !id.isBlank())
+                .toList();
+
+        if (!channelIds.isEmpty()) {
+            mongoTemplate.remove(Query.query(Criteria.where("channelId").in(channelIds)), "channel_messages");
+            mongoTemplate.remove(Query.query(Criteria.where("roomId").in(channelIds)), "voice_room_members");
+            mongoTemplate.remove(Query.query(Criteria.where("roomId").in(channelIds)), "voice_session_audit");
+        }
+        mongoTemplate.remove(unsupportedChannels, "community_channels");
+        mongoTemplate.remove(Query.query(Criteria.where("id").nin(COMMUNITY_GAME_IDS)), "game_hubs");
     }
 
     private void seedDefaultChannel(String id, String gameId, String name, String slug, String type,
