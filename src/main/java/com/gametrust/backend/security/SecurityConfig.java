@@ -71,7 +71,8 @@ public class SecurityConfig {
                                 "/api/tournaments/**",
                                 "/api/clans/**",
                                 "/api/reputation/**",
-                                "/api/social/**"
+                                "/api/social/**",
+                                "/api/community/**"
                         ).permitAll()
                         // Swagger OpenAPI documentation
                         .requestMatchers(

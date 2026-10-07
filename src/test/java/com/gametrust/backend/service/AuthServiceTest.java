@@ -3,10 +3,12 @@ package com.gametrust.backend.service;
 import com.gametrust.backend.dto.auth.AuthResponse;
 import com.gametrust.backend.dto.auth.LoginRequest;
 import com.gametrust.backend.dto.auth.RegisterRequest;
+import com.gametrust.backend.dto.auth.SendOtpRequest;
 import com.gametrust.backend.entity.Role;
 import com.gametrust.backend.entity.User;
 import com.gametrust.backend.exception.BadRequestException;
 import com.gametrust.backend.repository.RefreshTokenRepository;
+import com.gametrust.backend.repository.EmailVerificationRepository;
 import com.gametrust.backend.repository.UserRepository;
 import com.gametrust.backend.security.JwtService;
 import com.gametrust.backend.service.impl.AuthServiceImpl;
@@ -33,6 +35,12 @@ class AuthServiceTest {
 
     @Mock
     private RefreshTokenRepository refreshTokenRepository;
+
+    @Mock
+    private EmailVerificationRepository emailVerificationRepository;
+
+    @Mock
+    private EmailService emailService;
 
     @Mock
     private PasswordEncoder passwordEncoder;
@@ -109,5 +117,21 @@ class AuthServiceTest {
         when(passwordEncoder.matches("wrong_password", "encoded_password")).thenReturn(false);
 
         assertThrows(BadCredentialsException.class, () -> authService.login(request));
+    }
+
+    @Test
+    void sendRegistrationOtp_EmailFailure_RollsBackSavedOtp() {
+        SendOtpRequest request = new SendOtpRequest("new_gamer", "new@gametrust.gg");
+        when(userRepository.existsByEmail("new@gametrust.gg")).thenReturn(false);
+        when(userRepository.existsByUsername("new_gamer")).thenReturn(false);
+        when(emailVerificationRepository.findTopByEmailOrderByCreatedAtDesc("new@gametrust.gg"))
+                .thenReturn(Optional.empty());
+        doThrow(new BadRequestException("SMTP unavailable"))
+                .when(emailService).sendOtpEmail(eq("new@gametrust.gg"), eq("new_gamer"), anyString());
+
+        assertThrows(BadRequestException.class, () -> authService.sendRegistrationOtp(request));
+
+        verify(emailVerificationRepository).save(any());
+        verify(emailVerificationRepository, times(2)).deleteByEmail("new@gametrust.gg");
     }
 }

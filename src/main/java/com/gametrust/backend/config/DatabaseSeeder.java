@@ -5,11 +5,16 @@ import com.gametrust.backend.entity.User;
 import com.gametrust.backend.repository.UserRepository;
 import org.bson.Document;
 import org.springframework.boot.CommandLineRunner;
+import org.springframework.data.domain.Sort;
 import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.index.Index;
+import org.springframework.data.mongodb.core.query.Criteria;
+import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.time.Instant;
 
 @Component
 public class DatabaseSeeder implements CommandLineRunner {
@@ -32,6 +37,7 @@ public class DatabaseSeeder implements CommandLineRunner {
         seedClans();
         seedReputation();
         seedSocial();
+        seedCommunity();
     }
 
     private void seedUsers() {
@@ -130,6 +136,65 @@ public class DatabaseSeeder implements CommandLineRunner {
                 d("tag", "#NeonCircuitOpen", "count", "81", "color", "text-gt-yellow hover:text-white"),
                 d("tag", "#GameTrustSquads", "count", "94", "color", "text-gt-green hover:text-white")
         ));
+    }
+
+    private void seedCommunity() {
+        String adminId = userRepository.findByUsername("admin")
+                .map(User::getId)
+                .orElse("system");
+        List<Document> games = List.of(
+                d("id", "valorant", "name", "Valorant", "shortName", "VAL"),
+                d("id", "cs2", "name", "Counter-Strike 2", "shortName", "CS2"),
+                d("id", "league-of-legends", "name", "League of Legends", "shortName", "LOL"),
+                d("id", "apex-legends", "name", "Apex Legends", "shortName", "APEX"),
+                d("id", "lien-quan", "name", "Liên Quân Mobile", "shortName", "AOV"),
+                d("id", "free-fire", "name", "Free Fire", "shortName", "FF"),
+                d("id", "overwatch-2", "name", "Overwatch 2", "shortName", "OW2"),
+                d("id", "fortnite", "name", "Fortnite", "shortName", "FN")
+        );
+
+        for (Document game : games) {
+            String gameId = game.getString("id");
+            if (!mongoTemplate.exists(Query.query(Criteria.where("id").is(gameId)), "game_hubs")) {
+                game.append("ownerId", adminId).append("createdAt", Instant.now());
+                mongoTemplate.insert(game, "game_hubs");
+            }
+            seedDefaultChannel(gameId + "_general", gameId, "general", "general", "TEXT", adminId, 1, null);
+            seedDefaultChannel(gameId + "_voice_1", gameId, "Squad Room 1", "squad-room-1", "VOICE", adminId, 2, 10);
+            seedDefaultChannel(gameId + "_voice_2", gameId, "Squad Room 2", "squad-room-2", "VOICE", adminId, 3, 10);
+        }
+
+        mongoTemplate.indexOps("game_hubs").ensureIndex(new Index().on("id", Sort.Direction.ASC).unique());
+        mongoTemplate.indexOps("community_channels").ensureIndex(new Index().on("id", Sort.Direction.ASC).unique());
+        mongoTemplate.indexOps("community_channels").ensureIndex(
+                new Index().on("gameId", Sort.Direction.ASC).on("slug", Sort.Direction.ASC).unique());
+        mongoTemplate.indexOps("channel_messages").ensureIndex(new Index().on("id", Sort.Direction.ASC).unique());
+        mongoTemplate.indexOps("channel_messages").ensureIndex(
+                new Index().on("channelId", Sort.Direction.ASC).on("createdAt", Sort.Direction.DESC));
+        mongoTemplate.indexOps("voice_room_members").ensureIndex(new Index().on("id", Sort.Direction.ASC).unique());
+        mongoTemplate.indexOps("voice_room_members").ensureIndex(new Index().on("userId", Sort.Direction.ASC).unique());
+        mongoTemplate.indexOps("voice_room_members").ensureIndex(
+                new Index().on("roomId", Sort.Direction.ASC).on("userId", Sort.Direction.ASC).unique());
+    }
+
+    private void seedDefaultChannel(String id, String gameId, String name, String slug, String type,
+                                    String ownerId, int position, Integer capacity) {
+        if (mongoTemplate.exists(Query.query(Criteria.where("id").is(id)), "community_channels")) return;
+        Document channel = d(
+                "id", id,
+                "gameId", gameId,
+                "name", name,
+                "slug", slug,
+                "type", type,
+                "ownerId", ownerId,
+                "ownerUsername", "admin",
+                "locked", false,
+                "isDefault", true,
+                "position", position,
+                "createdAt", Instant.now()
+        );
+        if (capacity != null) channel.append("capacity", capacity);
+        mongoTemplate.insert(channel, "community_channels");
     }
 
     private Document clan(int id, String name, String tag, int members, String rating, String tier, String color,
