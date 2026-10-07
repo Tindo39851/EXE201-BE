@@ -26,3 +26,8 @@ target/
 *.tmp
 data/
 .DS_Store
+
+### Environment files ###
+.env
+.env.local
+*.env

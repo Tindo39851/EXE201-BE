@@ -44,4 +44,18 @@ public class SquadController {
             @AuthenticationPrincipal UserDetails user) {
         return ApiResponse.success(service.invitePlayer(playerId, user.getUsername()));
     }
+
+    @GetMapping("/invites/my")
+    public ApiResponse<List<Map<String, Object>>> myInvites(
+            @AuthenticationPrincipal UserDetails user) {
+        return ApiResponse.success(service.getMyInvites(user.getUsername()));
+    }
+
+    @PostMapping("/invites/{id}/respond")
+    public ApiResponse<Map<String, Object>> respondToInvite(
+            @PathVariable String id,
+            @RequestParam(defaultValue = "true") boolean accept,
+            @AuthenticationPrincipal UserDetails user) {
+        return ApiResponse.success(service.respondToInvite(id, accept, user.getUsername()));
+    }
 }

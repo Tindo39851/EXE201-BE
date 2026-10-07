@@ -27,6 +27,12 @@ public class TournamentController {
         return ApiResponse.success(service.getTournaments(status, game));
     }
 
+    @GetMapping("/my")
+    public ApiResponse<List<Map<String, Object>>> myTournaments(
+            @AuthenticationPrincipal UserDetails user) {
+        return ApiResponse.success(service.getMyTournaments(user.getUsername()));
+    }
+
     @GetMapping("/{id}")
     public ApiResponse<Map<String, Object>> tournament(@PathVariable String id) {
         return ApiResponse.success(service.getTournament(id));

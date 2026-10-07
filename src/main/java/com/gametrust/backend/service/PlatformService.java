@@ -1,8 +1,11 @@
 package com.gametrust.backend.service;
 
 import com.gametrust.backend.dto.platform.PlatformRequests.CreatePostRequest;
+import com.gametrust.backend.dto.platform.PlatformRequests.CreateReportRequest;
+import com.gametrust.backend.dto.platform.PlatformRequests.CreateReviewRequest;
 import com.gametrust.backend.dto.platform.PlatformRequests.MatchmakingRequest;
 import com.gametrust.backend.dto.platform.PlatformRequests.TournamentRegistrationRequest;
+import com.gametrust.backend.exception.BadRequestException;
 import com.gametrust.backend.exception.ResourceNotFoundException;
 import org.bson.Document;
 import org.springframework.data.domain.Sort;
@@ -67,24 +70,67 @@ public class PlatformService {
 
     public Map<String, Object> invitePlayer(String playerId, String username) {
         findOne("player_profiles", "id", playerId, "Player not found");
-        mongoTemplate.insert(doc(
+        String id = "inv_" + UUID.randomUUID().toString().substring(0, 8);
+        Map<String, Object> invite = doc(
+                "id", id,
                 "playerId", playerId,
                 "invitedBy", username,
                 "status", "PENDING",
                 "createdAt", Instant.now()
-        ), "player_invites");
-        return doc("success", true, "message", "Invite dispatched to " + playerId);
+        );
+        mongoTemplate.insert(invite, "player_invites");
+        return doc("success", true, "message", "Invite dispatched to " + playerId, "id", id);
+    }
+
+    public List<Map<String, Object>> getMyInvites(String username) {
+        Query query = new Query();
+        query.addCriteria(new Criteria().orOperator(
+                Criteria.where("playerId").regex(Pattern.compile("^" + Pattern.quote(username) + "$", Pattern.CASE_INSENSITIVE)),
+                Criteria.where("invitedBy").is(username)
+        ));
+        query.with(Sort.by(Sort.Direction.DESC, "createdAt"));
+        return find(query, "player_invites");
+    }
+
+    public Map<String, Object> respondToInvite(String inviteId, boolean accept, String username) {
+        Document invite = findOne("player_invites", "id", inviteId, "Invite not found");
+        String recipient = (String) invite.get("playerId");
+        String inviter = (String) invite.get("invitedBy");
+
+        if (username == null || (!username.equalsIgnoreCase(recipient) && !username.equalsIgnoreCase(inviter))) {
+            throw new BadRequestException("You are not authorized to respond to this invite");
+        }
+
+        Query query = Query.query(Criteria.where("id").is(inviteId));
+        Update update = new Update().set("status", accept ? "ACCEPTED" : "DECLINED").set("updatedAt", Instant.now());
+        mongoTemplate.updateFirst(query, update, "player_invites");
+        return doc("success", true, "message", accept ? "Invite accepted! Joined squad lobby." : "Invite declined.");
     }
 
     public List<Map<String, Object>> getTournaments(String status, String game) {
         Query query = new Query();
         addExactFilter(query, "status", status);
         addExactFilter(query, "game", game);
-        return find(query, "tournaments");
+        List<Map<String, Object>> list = find(query, "tournaments");
+        for (Map<String, Object> t : list) {
+            // Chuẩn hóa 2 schema cũ và mới để client đọc trường nào cũng có giá trị
+            if (!t.containsKey("title") && t.containsKey("name")) t.put("title", t.get("name"));
+            if (!t.containsKey("name") && t.containsKey("title")) t.put("name", t.get("title"));
+            if (!t.containsKey("prizePool") && t.containsKey("prize")) t.put("prizePool", t.get("prize"));
+            if (!t.containsKey("prize") && t.containsKey("prizePool")) t.put("prize", t.get("prizePool"));
+            if (!t.containsKey("startDate") && t.containsKey("countdown")) t.put("startDate", t.get("countdown"));
+            if (!t.containsKey("countdown") && t.containsKey("startDate")) t.put("countdown", t.get("startDate"));
+        }
+        return list;
     }
 
     public Map<String, Object> getTournament(String id) {
-        return publicDocument(findOne("tournaments", "id", id, "Tournament not found"));
+        Map<String, Object> t = publicDocument(findOne("tournaments", "id", id, "Tournament not found"));
+        if (!t.containsKey("title") && t.containsKey("name")) t.put("title", t.get("name"));
+        if (!t.containsKey("name") && t.containsKey("title")) t.put("name", t.get("title"));
+        if (!t.containsKey("prizePool") && t.containsKey("prize")) t.put("prizePool", t.get("prize"));
+        if (!t.containsKey("prize") && t.containsKey("prizePool")) t.put("prize", t.get("prizePool"));
+        return t;
     }
 
     public List<Map<String, Object>> getBracket(String tournamentId) {
@@ -95,8 +141,62 @@ public class PlatformService {
         return bracket;
     }
 
+    public Map<String, Object> createTournament(Map<String, Object> payload) {
+        String id = "tourn_" + UUID.randomUUID().toString().substring(0, 8);
+        String title = (String) payload.getOrDefault("title", payload.getOrDefault("name", "New Esports Tournament"));
+        String prize = (String) payload.getOrDefault("prizePool", payload.getOrDefault("prize", "$1,000 USD"));
+        int maxTeams = payload.get("maxTeams") != null ? ((Number) payload.get("maxTeams")).intValue() : 16;
+        String startDate = (String) payload.getOrDefault("startDate", payload.getOrDefault("countdown", "TBD"));
+
+        Document doc = new Document();
+        doc.put("id", id);
+        doc.put("title", title);
+        doc.put("name", title); // Schema cũ
+        doc.put("game", payload.getOrDefault("game", "VALORANT"));
+        doc.put("format", payload.getOrDefault("format", "5v5 Single Elimination"));
+        doc.put("prizePool", prize);
+        doc.put("prize", prize); // Schema cũ
+        doc.put("maxTeams", maxTeams);
+        doc.put("teams", "0 / " + maxTeams); // Schema cũ
+        doc.put("registeredTeams", 0);
+        doc.put("status", payload.getOrDefault("status", "UPCOMING"));
+        doc.put("startDate", startDate);
+        doc.put("countdown", startDate); // Schema cũ
+        doc.put("bannerUrl", payload.getOrDefault("bannerUrl", "https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=800&q=80"));
+        doc.put("createdAt", Instant.now());
+        mongoTemplate.insert(doc, "tournaments");
+        return publicDocument(doc);
+    }
+
+    public Map<String, Object> updateTournamentStatus(String id, String status) {
+        Document found = findOne("tournaments", "id", id, "Tournament not found");
+        Query q = Query.query(Criteria.where("id").is(id));
+        Update u = Update.update("status", status.toUpperCase());
+        mongoTemplate.updateFirst(q, u, "tournaments");
+        found.put("status", status.toUpperCase());
+        return publicDocument(found);
+    }
+
+    public void deleteTournament(String id) {
+        findOne("tournaments", "id", id, "Tournament not found");
+        mongoTemplate.remove(Query.query(Criteria.where("id").is(id)), "tournaments");
+        mongoTemplate.remove(Query.query(Criteria.where("tournamentId").is(id)), "tournament_registrations");
+        mongoTemplate.remove(Query.query(Criteria.where("tournamentId").is(id)), "tournament_brackets");
+    }
+
     public Map<String, Object> registerTournament(String tournamentId, TournamentRegistrationRequest request, String username) {
-        findOne("tournaments", "id", tournamentId, "Tournament not found");
+        Document tournament = findOne("tournaments", "id", tournamentId, "Tournament not found");
+        String status = tournament.getString("status");
+        if (status != null && (status.equalsIgnoreCase("COMPLETED") || status.equalsIgnoreCase("CANCELLED"))) {
+            throw new BadRequestException("Giải đấu đã ở trạng thái " + status + " và không còn tiếp nhận đăng ký mới.");
+        }
+
+        int maxTeams = tournament.getInteger("maxTeams", 16);
+        int currentRegistered = tournament.getInteger("registeredTeams", 0);
+        if (currentRegistered >= maxTeams) {
+            throw new BadRequestException("Giải đấu đã đạt giới hạn tối đa số đội tham gia (" + maxTeams + " đội).");
+        }
+
         mongoTemplate.insert(doc(
                 "tournamentId", tournamentId,
                 "teamName", request.teamName(),
@@ -105,7 +205,19 @@ public class PlatformService {
                 "status", "CONFIRMED",
                 "createdAt", Instant.now()
         ), "tournament_registrations");
+
+        int updatedCount = currentRegistered + 1;
+        Query tq = Query.query(Criteria.where("id").is(tournamentId));
+        Update tu = new Update().set("registeredTeams", updatedCount).set("teams", updatedCount + " / " + maxTeams);
+        mongoTemplate.updateFirst(tq, tu, "tournaments");
+
         return doc("success", true, "message", "Squad successfully registered for tournament");
+    }
+
+    public List<Map<String, Object>> getMyTournaments(String username) {
+        Query query = Query.query(Criteria.where("registeredBy").is(username));
+        query.with(Sort.by(Sort.Direction.DESC, "createdAt"));
+        return find(query, "tournament_registrations");
     }
 
     public List<Map<String, Object>> getClans(String tier, String region) {
@@ -118,6 +230,17 @@ public class PlatformService {
 
     public Map<String, Object> getClan(int id) {
         return publicDocument(findOne("clans", "id", id, "Clan not found"));
+    }
+
+    public void deleteClan(String id) {
+        Query q = new Query();
+        try {
+            int intId = Integer.parseInt(id);
+            q.addCriteria(new Criteria().orOperator(Criteria.where("id").is(intId), Criteria.where("id").is(id)));
+        } catch (NumberFormatException e) {
+            q.addCriteria(Criteria.where("id").is(id));
+        }
+        mongoTemplate.remove(q, "clans");
     }
 
     public Map<String, Object> requestJoinClan(int clanId, String username) {
@@ -140,7 +263,116 @@ public class PlatformService {
     }
 
     public List<Map<String, Object>> getReviews() {
-        return find(new Query(), "reputation_reviews");
+        return find(new Query().with(Sort.by(Sort.Direction.DESC, "createdAt")), "reputation_reviews");
+    }
+
+    public Map<String, Object> createReview(CreateReviewRequest request, String author) {
+        String id = "rev_" + UUID.randomUUID().toString().substring(0, 8);
+        int stars = Math.min(5, Math.max(1, request.stars() <= 0 ? 5 : request.stars()));
+        String badge = request.badge() != null && !request.badge().isBlank() ? request.badge() : "Team Player";
+        String badgeColor = stars >= 5 ? "cyan" : stars >= 4 ? "green" : "magenta";
+
+        Map<String, Object> review = doc(
+                "id", id,
+                "user", request.user().trim().toUpperCase(),
+                "stars", stars,
+                "quote", request.quote().trim(),
+                "author", author,
+                "time", "Just now",
+                "badge", badge,
+                "badgeColor", badgeColor,
+                "createdAt", Instant.now()
+        );
+        mongoTemplate.insert(review, "reputation_reviews");
+        review.remove("createdAt");
+        return review;
+    }
+
+    public Map<String, Object> createReport(CreateReportRequest request, String reporter) {
+        String id = "#RPT_" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
+        String type = request.type().trim().toUpperCase();
+        String badgeColor = "TOXICITY".equals(type) || "CHEATING".equals(type) ? "red" : "yellow";
+
+        Map<String, Object> report = doc(
+                "id", id,
+                "type", type,
+                "user", request.user().trim().toUpperCase(),
+                "reason", request.reason() != null ? request.reason().trim() : "",
+                "status", "PENDING",
+                "badgeColor", badgeColor,
+                "reporter", reporter,
+                "createdAt", Instant.now()
+        );
+        mongoTemplate.insert(report, "reputation_reports");
+        report.remove("createdAt");
+        return report;
+    }
+
+    public Map<String, Object> resolveReport(String reportId, String action) {
+        Document found = findOne("reputation_reports", "id", reportId, "Report not found");
+        String currentStatus = found.getString("status");
+        if (!"PENDING".equalsIgnoreCase(currentStatus)) {
+            throw new BadRequestException("Báo cáo vi phạm này đã được xử lý trước đó (trạng thái: " + currentStatus + ")");
+        }
+
+        String reportedUser = found.getString("user");
+        String resolutionNote;
+
+        if ("BAN".equalsIgnoreCase(action)) {
+            resolutionNote = "Account Suspended";
+        } else {
+            resolutionNote = "Penalized (-20 REP)";
+        }
+
+        // Atomically chuyển trạng thái report từ PENDING -> RESOLVED
+        Query rq = Query.query(new Criteria().andOperator(
+                Criteria.where("id").is(reportId),
+                Criteria.where("status").is("PENDING")
+        ));
+        Update ru = new Update().set("status", "RESOLVED").set("resolution", resolutionNote);
+        var updateResult = mongoTemplate.updateFirst(rq, ru, "reputation_reports");
+        if (updateResult.getModifiedCount() == 0) {
+            throw new BadRequestException("Báo cáo vi phạm này đã được xử lý bởi một phiên khác.");
+        }
+
+        // Thi hành án phạt
+        Query uq = Query.query(Criteria.where("username").regex("^" + Pattern.quote(reportedUser) + "$", "i"));
+        if ("BAN".equalsIgnoreCase(action)) {
+            mongoTemplate.updateFirst(uq, new Update().set("isActive", false).set("active", false), "users");
+        } else {
+            Document userDoc = mongoTemplate.findOne(uq, Document.class, "users");
+            if (userDoc != null) {
+                int currentScore = userDoc.getInteger("reputationScore", 100);
+                int newScore = Math.max(0, currentScore - 20); // Đảm bảo điểm không âm
+                mongoTemplate.updateFirst(uq, new Update().set("reputationScore", newScore), "users");
+            }
+        }
+
+        found.put("status", "RESOLVED");
+        found.put("resolution", resolutionNote);
+        return publicDocument(found);
+    }
+
+    public Map<String, Object> dismissReport(String reportId) {
+        Document found = findOne("reputation_reports", "id", reportId, "Report not found");
+        String currentStatus = found.getString("status");
+        if (!"PENDING".equalsIgnoreCase(currentStatus)) {
+            throw new BadRequestException("Báo cáo vi phạm này đã được xử lý trước đó (trạng thái: " + currentStatus + ")");
+        }
+
+        Query rq = Query.query(new Criteria().andOperator(
+                Criteria.where("id").is(reportId),
+                Criteria.where("status").is("PENDING")
+        ));
+        Update ru = new Update().set("status", "DISMISSED").set("resolution", "Dismissed (No violation)");
+        var updateResult = mongoTemplate.updateFirst(rq, ru, "reputation_reports");
+        if (updateResult.getModifiedCount() == 0) {
+            throw new BadRequestException("Báo cáo vi phạm này đã được xử lý bởi một phiên khác.");
+        }
+
+        found.put("status", "DISMISSED");
+        found.put("resolution", "Dismissed (No violation)");
+        return publicDocument(found);
     }
 
     public List<Map<String, Object>> getTopPlayers() {

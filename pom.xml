@@ -40,6 +40,12 @@
 			<artifactId>spring-boot-starter-data-mongodb</artifactId>
 		</dependency>
 
+		<!-- Spring Boot Starter Mail (OTP verification) -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-mail</artifactId>
+		</dependency>
+
 		<!-- Jakarta Bean Validation -->
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
