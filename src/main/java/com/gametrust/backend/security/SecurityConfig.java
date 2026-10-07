@@ -66,6 +66,7 @@ public class SecurityConfig {
                                 "/api/auth/refresh",
                                 "/api/auth/logout"
                         ).permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/livekit/webhook").permitAll()
                         .requestMatchers(HttpMethod.GET,
                                 "/api/squads/**",
                                 "/api/tournaments/**",

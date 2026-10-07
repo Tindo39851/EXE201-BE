@@ -39,6 +39,12 @@ gametrust:
     # Local E2E only. Keep false in deployed environments and configure SMTP instead.
     dev-mode: ${OTP_DEV_MODE:false}
 
+livekit:
+  server-url: ${LIVEKIT_SERVER_URL:}
+  api-key: ${LIVEKIT_API_KEY:}
+  api-secret: ${LIVEKIT_API_SECRET:}
+  token-ttl-seconds: ${LIVEKIT_TOKEN_TTL_SECONDS:300}
+
 springdoc:
   swagger-ui:
     path: /swagger-ui.html
