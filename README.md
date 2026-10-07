@@ -1,6 +1,6 @@
 # GameTrust Backend API
 
-Spring Boot backend for the GameTrust gamer matchmaking and social platform. The service exposes authentication, role-based authorization, squad matchmaking, tournaments, clans, reputation, and social APIs. All persistent data is stored in MongoDB.
+Spring Boot backend for the GameTrust gamer matchmaking and social platform. The service exposes authentication, role-based authorization, Discord-like game communities, squad matchmaking, tournaments, clans, reputation, and social APIs. All persistent data is stored in MongoDB.
 
 ## Stack
 
@@ -171,6 +171,42 @@ Registration body:
 | GET | `/api/social/online-players` | Public | List currently advertised online players |
 | GET | `/api/social/trending-tags` | Public | List trending tags |
 
+### Game communities, chat and voice rooms
+
+The first startup creates 8 game hubs. Every game has one `#general` text channel and two default voice rooms (`Squad Room 1`, `Squad Room 2`). Default rooms can be renamed, resized and locked but cannot be deleted. A user can be connected to only one voice room at a time.
+
+| Method | Endpoint | Access | Behavior |
+|---|---|---|---|
+| GET | `/api/community/games` | Public | List game hubs and their channels |
+| GET | `/api/community/games/{gameId}` | Public | Get one game hub and channels |
+| GET | `/api/community/games/{gameId}/channels` | Public | List the game's text and voice channels |
+| GET | `/api/community/channels/{channelId}/messages?before=&limit=50` | Public | Read up to 100 messages; `before` is an ISO timestamp |
+| POST | `/api/community/channels/{channelId}/messages` | Authenticated | Send a message to a text channel |
+| PATCH | `/api/community/messages/{messageId}` | Message author | Edit a message |
+| DELETE | `/api/community/messages/{messageId}` | Author/owner/mod/admin | Delete a message |
+| GET | `/api/community/rooms/{roomId}` | Public | Read room state and online members |
+| POST | `/api/community/rooms/{roomId}/join` | Authenticated | Join/switch to a voice room |
+| POST | `/api/community/rooms/{roomId}/leave` | Authenticated | Leave a voice room |
+| POST | `/api/community/games/{gameId}/rooms` | Authenticated | Create an extra voice room; caller becomes owner |
+| PATCH | `/api/community/rooms/{roomId}` | Owner/mod/admin | Rename, resize or lock a room |
+| DELETE | `/api/community/rooms/{roomId}` | Owner/mod/admin | Delete a non-default room |
+| PATCH | `/api/community/rooms/{roomId}/members/{userId}` | Owner/mod/admin | Mute/unmute a room member |
+| DELETE | `/api/community/rooms/{roomId}/members/{userId}` | Owner/mod/admin | Kick a room member |
+
+Message body:
+
+```json
+{ "content": "Tìm thêm 1 support đánh rank tối nay" }
+```
+
+Create room body:
+
+```json
+{ "name": "Ranked Team A", "capacity": 5 }
+```
+
+Room state and chat history are persisted by this REST API. Real-time delivery and actual voice media should be connected later through WebSocket plus a WebRTC provider such as LiveKit; audio is not transported through REST.
+
 ## MongoDB collections
 
 The `gametrust` database contains:
@@ -181,11 +217,13 @@ The `gametrust` database contains:
 - Clan: `clans`, `clan_join_requests`
 - Reputation: `reputation_metrics`, `reputation_reports`, `reputation_reviews`, `top_rep_players`
 - Social: `social_posts`, `online_players`, `trending_tags`
+- Communities: `game_hubs`, `community_channels`, `channel_messages`, `voice_room_members`
 
 Unique MongoDB indexes protect `users.username`, `users.email`, and `refresh_tokens.token`. Refresh-token documents also have a TTL index on `expiresAt`.
 
 ## Verification performed
 
-- `mvn.cmd test`: 4 authentication service tests pass.
+- `mvn.cmd test`: 6 authentication/JWT tests pass.
 - `mvn.cmd package`: executable JAR builds successfully.
-- Live MongoDB checks covered login, `/me`, public feature reads, protected mutations, member rejection from admin API, admin access, refresh rotation, old-token rejection, and logout revocation.
+- Live MongoDB checks covered all 8 seeded game hubs, one text + two voice channels per game, chat persistence, join/leave presence, admin mute, owner room updates/deletion and `403` rejection when a member tries to manage a default room.
+- Authentication checks covered login, `/me`, protected mutations, member rejection from admin APIs, refresh rotation, old-token rejection, and logout revocation.

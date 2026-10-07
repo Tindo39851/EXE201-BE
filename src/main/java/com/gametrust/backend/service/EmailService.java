@@ -19,12 +19,20 @@ public class EmailService {
     @Value("${spring.mail.username:}")
     private String fromEmail;
 
+    @Value("${gametrust.otp.dev-mode:false}")
+    private boolean otpDevMode;
+
     public EmailService(@Autowired(required = false) JavaMailSender mailSender) {
         this.mailSender = mailSender;
     }
 
     public void sendOtpEmail(String toEmail, String username, String otp) {
         log.info("[EmailService] Dispatching 6-digit verification code to recipient: {} for user: {}", toEmail, username);
+
+        if (otpDevMode) {
+            log.warn("[EmailService] OTP dev mode is enabled. Local verification code for {}: {}", toEmail, otp);
+            return;
+        }
 
         if (mailSender == null || fromEmail == null || fromEmail.isBlank()) {
             log.error("[EmailService] SMTP credentials not configured.");

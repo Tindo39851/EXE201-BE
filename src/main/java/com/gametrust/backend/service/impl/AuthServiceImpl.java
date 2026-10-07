@@ -22,10 +22,12 @@ import org.springframework.stereotype.Service;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Random;
+import java.security.SecureRandom;
 
 @Service
 public class AuthServiceImpl implements AuthService {
+
+    private static final SecureRandom OTP_RANDOM = new SecureRandom();
 
     private final UserRepository userRepository;
     private final RefreshTokenRepository refreshTokenRepository;
@@ -196,7 +198,7 @@ public class AuthServiceImpl implements AuthService {
         }
 
         // Sinh mã OTP 6 chữ số ngẫu nhiên
-        String otp = String.format("%06d", new Random().nextInt(1_000_000));
+        String otp = String.format("%06d", OTP_RANDOM.nextInt(1_000_000));
         Instant expiresAt = Instant.now().plusSeconds(300); // 5 phút
 
         // Xóa mã OTP cũ của email này nếu có
@@ -205,8 +207,13 @@ public class AuthServiceImpl implements AuthService {
         // Lưu mã OTP mới vào MongoDB
         emailVerificationRepository.save(new EmailVerification(cleanEmail, otp, expiresAt));
 
-        // Gửi email chứa OTP
-        emailService.sendOtpEmail(cleanEmail, cleanUsername, otp);
+        // Gửi email chứa OTP. Nếu SMTP lỗi, rollback OTP để người dùng có thể thử lại ngay.
+        try {
+            emailService.sendOtpEmail(cleanEmail, cleanUsername, otp);
+        } catch (RuntimeException exception) {
+            emailVerificationRepository.deleteByEmail(cleanEmail);
+            throw exception;
+        }
     }
 
     @Override

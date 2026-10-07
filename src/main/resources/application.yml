@@ -34,6 +34,11 @@ jwt:
   cookie:
     secure: ${JWT_COOKIE_SECURE:false}
 
+gametrust:
+  otp:
+    # Local E2E only. Keep false in deployed environments and configure SMTP instead.
+    dev-mode: ${OTP_DEV_MODE:false}
+
 springdoc:
   swagger-ui:
     path: /swagger-ui.html
