@@ -33,9 +33,9 @@ public class AuthController {
     }
 
     @PostMapping("/register")
-    @Operation(summary = "Register a new gamer account", description = "Creates a new user account with default role MEMBER, returns JWT credentials and sets HttpOnly cookies")
-    public ResponseEntity<ApiResponse<AuthResponse>> register(@Valid @RequestBody RegisterRequest request) {
-        AuthResponse response = authService.register(request);
+    @Operation(summary = "Register a new gamer account with OTP", description = "Verifies 6-digit OTP code, creates account with role MEMBER and sets HttpOnly JWT cookies")
+    public ResponseEntity<ApiResponse<AuthResponse>> register(@Valid @RequestBody VerifyOtpRegisterRequest request) {
+        AuthResponse response = authService.verifyAndRegister(request);
         ResponseCookie accessCookie = jwtService.generateAccessTokenCookie(response.getAccessToken());
         ResponseCookie refreshCookie = jwtService.generateRefreshTokenCookie(response.getRefreshToken());
 

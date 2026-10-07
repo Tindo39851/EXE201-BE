@@ -5,6 +5,7 @@ import com.gametrust.backend.dto.platform.PlatformRequests.CreateReportRequest;
 import com.gametrust.backend.dto.platform.PlatformRequests.CreateReviewRequest;
 import com.gametrust.backend.dto.platform.PlatformRequests.MatchmakingRequest;
 import com.gametrust.backend.dto.platform.PlatformRequests.TournamentRegistrationRequest;
+import com.gametrust.backend.exception.BadRequestException;
 import com.gametrust.backend.exception.ResourceNotFoundException;
 import org.bson.Document;
 import org.springframework.data.domain.Sort;
@@ -84,19 +85,22 @@ public class PlatformService {
     public List<Map<String, Object>> getMyInvites(String username) {
         Query query = new Query();
         query.addCriteria(new Criteria().orOperator(
-                Criteria.where("playerId").regex(Pattern.compile(Pattern.quote(username), Pattern.CASE_INSENSITIVE)),
+                Criteria.where("playerId").regex(Pattern.compile("^" + Pattern.quote(username) + "$", Pattern.CASE_INSENSITIVE)),
                 Criteria.where("invitedBy").is(username)
         ));
         query.with(Sort.by(Sort.Direction.DESC, "createdAt"));
-        List<Map<String, Object>> invites = find(query, "player_invites");
-        if (invites.isEmpty()) {
-            // If user has no invites yet, return global pending invites so demo has content
-            invites = find(new Query().limit(5).with(Sort.by(Sort.Direction.DESC, "createdAt")), "player_invites");
-        }
-        return invites;
+        return find(query, "player_invites");
     }
 
-    public Map<String, Object> respondToInvite(String inviteId, boolean accept) {
+    public Map<String, Object> respondToInvite(String inviteId, boolean accept, String username) {
+        Document invite = findOne("player_invites", "id", inviteId, "Invite not found");
+        String recipient = (String) invite.get("playerId");
+        String inviter = (String) invite.get("invitedBy");
+
+        if (username == null || (!username.equalsIgnoreCase(recipient) && !username.equalsIgnoreCase(inviter))) {
+            throw new BadRequestException("You are not authorized to respond to this invite");
+        }
+
         Query query = Query.query(Criteria.where("id").is(inviteId));
         Update update = new Update().set("status", accept ? "ACCEPTED" : "DECLINED").set("updatedAt", Instant.now());
         mongoTemplate.updateFirst(query, update, "player_invites");
@@ -170,11 +174,7 @@ public class PlatformService {
     public List<Map<String, Object>> getMyTournaments(String username) {
         Query query = Query.query(Criteria.where("registeredBy").is(username));
         query.with(Sort.by(Sort.Direction.DESC, "createdAt"));
-        List<Map<String, Object>> list = find(query, "tournament_registrations");
-        if (list.isEmpty()) {
-            list = find(new Query().limit(3), "tournament_registrations");
-        }
-        return list;
+        return find(query, "tournament_registrations");
     }
 
     public List<Map<String, Object>> getClans(String tier, String region) {

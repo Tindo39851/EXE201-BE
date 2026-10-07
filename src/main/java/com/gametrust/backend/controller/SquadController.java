@@ -56,6 +56,6 @@ public class SquadController {
             @PathVariable String id,
             @RequestParam(defaultValue = "true") boolean accept,
             @AuthenticationPrincipal UserDetails user) {
-        return ApiResponse.success(service.respondToInvite(id, accept));
+        return ApiResponse.success(service.respondToInvite(id, accept, user.getUsername()));
     }
 }

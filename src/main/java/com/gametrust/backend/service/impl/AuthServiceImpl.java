@@ -188,6 +188,17 @@ public class AuthServiceImpl implements AuthService {
             throw new BadRequestException("Username đã tồn tại, vui lòng chọn tên khác");
         }
 
+        // Rate limit: Kiểm tra xem mã OTP gần nhất có được gửi trong vòng 60 giây qua không
+        java.util.Optional<EmailVerification> existingVerification = emailVerificationRepository
+                .findTopByEmailOrderByCreatedAtDesc(cleanEmail);
+        if (existingVerification.isPresent()) {
+            EmailVerification prev = existingVerification.get();
+            if (prev.getLastSentAt() != null && Instant.now().isBefore(prev.getLastSentAt().plusSeconds(60))) {
+                long waitSeconds = 60 - java.time.Duration.between(prev.getLastSentAt(), Instant.now()).toSeconds();
+                throw new BadRequestException("Vui lòng đợi " + Math.max(1, waitSeconds) + " giây trước khi yêu cầu mã OTP mới.");
+            }
+        }
+
         // Sinh mã OTP 6 chữ số ngẫu nhiên
         String otp = String.format("%06d", new Random().nextInt(1_000_000));
         Instant expiresAt = Instant.now().plusSeconds(300); // 5 phút
@@ -224,8 +235,16 @@ public class AuthServiceImpl implements AuthService {
             throw new BadRequestException("Mã OTP đã hết hạn (chỉ có hiệu lực trong 5 phút). Vui lòng gửi lại mã mới.");
         }
 
+        // Brute-force protection: giới hạn tối đa 5 lần thử sai
         if (!verification.getOtp().equals(request.getOtp().trim())) {
-            throw new BadRequestException("Mã OTP không chính xác. Vui lòng kiểm tra lại hòm thư của bạn.");
+            int attempts = verification.getFailedAttempts() + 1;
+            verification.setFailedAttempts(attempts);
+            if (attempts >= 5) {
+                emailVerificationRepository.deleteByEmail(cleanEmail);
+                throw new BadRequestException("Bạn đã nhập sai mã OTP quá 5 lần. Mã OTP đã bị hủy vì lý do bảo mật. Vui lòng bấm gửi lại mã mới.");
+            }
+            emailVerificationRepository.save(verification);
+            throw new BadRequestException("Mã OTP không chính xác. Bạn còn " + (5 - attempts) + " lần thử.");
         }
 
         // OTP hợp lệ -> Xóa OTP

@@ -21,6 +21,10 @@ public class EmailVerification {
 
     private Instant createdAt = Instant.now();
 
+    private int failedAttempts = 0;
+
+    private Instant lastSentAt = Instant.now();
+
     public EmailVerification() {
     }
 
@@ -29,6 +33,8 @@ public class EmailVerification {
         this.otp = otp;
         this.expiresAt = expiresAt;
         this.createdAt = Instant.now();
+        this.lastSentAt = Instant.now();
+        this.failedAttempts = 0;
     }
 
     public String getId() {
@@ -69,5 +75,21 @@ public class EmailVerification {
 
     public void setCreatedAt(Instant createdAt) {
         this.createdAt = createdAt;
+    }
+
+    public int getFailedAttempts() {
+        return failedAttempts;
+    }
+
+    public void setFailedAttempts(int failedAttempts) {
+        this.failedAttempts = failedAttempts;
+    }
+
+    public Instant getLastSentAt() {
+        return lastSentAt;
+    }
+
+    public void setLastSentAt(Instant lastSentAt) {
+        this.lastSentAt = lastSentAt;
     }
 }

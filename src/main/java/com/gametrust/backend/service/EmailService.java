@@ -24,13 +24,10 @@ public class EmailService {
     }
 
     public void sendOtpEmail(String toEmail, String username, String otp) {
-        log.info("\n========================================================================"
-                + "\n[GAMETRUST OTP CODE]: To: {} (User: {})"
-                + "\n>>> YOUR VERIFICATION CODE IS: {} <<< (Valid for 5 minutes)"
-                + "\n========================================================================", toEmail, username, otp);
+        log.info("[EmailService] Dispatching 6-digit verification code to recipient: {} for user: {}", toEmail, username);
 
         if (mailSender == null || fromEmail == null || fromEmail.isBlank()) {
-            log.info("[EmailService] SMTP credentials not set. OTP printed to console log above.");
+            log.warn("[EmailService] SMTP credentials not configured. Email will not be sent over network.");
             return;
         }
 
