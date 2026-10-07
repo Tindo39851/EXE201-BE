@@ -27,8 +27,8 @@ public class EmailService {
         log.info("[EmailService] Dispatching 6-digit verification code to recipient: {} for user: {}", toEmail, username);
 
         if (mailSender == null || fromEmail == null || fromEmail.isBlank()) {
-            log.warn("[EmailService] SMTP credentials not configured. Email will not be sent over network.");
-            return;
+            log.error("[EmailService] SMTP credentials not configured.");
+            throw new com.gametrust.backend.exception.BadRequestException("Dịch vụ gửi email OTP chưa được cấu hình. Vui lòng liên hệ quản trị viên.");
         }
 
         try {
@@ -69,8 +69,11 @@ public class EmailService {
             helper.setText(htmlContent, true);
             mailSender.send(message);
             log.info("[EmailService] Real OTP email successfully dispatched to {}", toEmail);
+        } catch (com.gametrust.backend.exception.BadRequestException e) {
+            throw e;
         } catch (Exception e) {
-            log.warn("[EmailService] Could not send via SMTP (check credentials/app password): {}. Fallback OTP is still valid in logs.", e.getMessage());
+            log.error("[EmailService] SMTP delivery failed: {}", e.getMessage());
+            throw new com.gametrust.backend.exception.BadRequestException("Không thể gửi email OTP đến " + toEmail + ". Vui lòng thử lại sau.");
         }
     }
 }

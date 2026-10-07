@@ -180,6 +180,8 @@ public class PlatformService {
     public void deleteTournament(String id) {
         findOne("tournaments", "id", id, "Tournament not found");
         mongoTemplate.remove(Query.query(Criteria.where("id").is(id)), "tournaments");
+        mongoTemplate.remove(Query.query(Criteria.where("tournamentId").is(id)), "tournament_registrations");
+        mongoTemplate.remove(Query.query(Criteria.where("tournamentId").is(id)), "tournament_brackets");
     }
 
     public Map<String, Object> registerTournament(String tournamentId, TournamentRegistrationRequest request, String username) {
@@ -308,23 +310,44 @@ public class PlatformService {
 
     public Map<String, Object> resolveReport(String reportId, String action) {
         Document found = findOne("reputation_reports", "id", reportId, "Report not found");
+        String currentStatus = found.getString("status");
+        if (!"PENDING".equalsIgnoreCase(currentStatus)) {
+            throw new BadRequestException("Báo cáo vi phạm này đã được xử lý trước đó (trạng thái: " + currentStatus + ")");
+        }
+
         String reportedUser = found.getString("user");
         String resolutionNote;
 
         if ("BAN".equalsIgnoreCase(action)) {
-            Query uq = Query.query(Criteria.where("username").regex("^" + Pattern.quote(reportedUser) + "$", "i"));
-            mongoTemplate.updateFirst(uq, new Update().set("isActive", false).set("active", false), "users");
             resolutionNote = "Account Suspended";
         } else {
-            // Default: Deduct 20 REP
-            Query uq = Query.query(Criteria.where("username").regex("^" + Pattern.quote(reportedUser) + "$", "i"));
-            mongoTemplate.updateFirst(uq, new Update().inc("reputationScore", -20), "users");
             resolutionNote = "Penalized (-20 REP)";
         }
 
-        Query rq = Query.query(Criteria.where("id").is(reportId));
+        // Atomically chuyển trạng thái report từ PENDING -> RESOLVED
+        Query rq = Query.query(new Criteria().andOperator(
+                Criteria.where("id").is(reportId),
+                Criteria.where("status").is("PENDING")
+        ));
         Update ru = new Update().set("status", "RESOLVED").set("resolution", resolutionNote);
-        mongoTemplate.updateFirst(rq, ru, "reputation_reports");
+        var updateResult = mongoTemplate.updateFirst(rq, ru, "reputation_reports");
+        if (updateResult.getModifiedCount() == 0) {
+            throw new BadRequestException("Báo cáo vi phạm này đã được xử lý bởi một phiên khác.");
+        }
+
+        // Thi hành án phạt
+        Query uq = Query.query(Criteria.where("username").regex("^" + Pattern.quote(reportedUser) + "$", "i"));
+        if ("BAN".equalsIgnoreCase(action)) {
+            mongoTemplate.updateFirst(uq, new Update().set("isActive", false).set("active", false), "users");
+        } else {
+            Document userDoc = mongoTemplate.findOne(uq, Document.class, "users");
+            if (userDoc != null) {
+                int currentScore = userDoc.getInteger("reputationScore", 100);
+                int newScore = Math.max(0, currentScore - 20); // Đảm bảo điểm không âm
+                mongoTemplate.updateFirst(uq, new Update().set("reputationScore", newScore), "users");
+            }
+        }
+
         found.put("status", "RESOLVED");
         found.put("resolution", resolutionNote);
         return publicDocument(found);
@@ -332,9 +355,21 @@ public class PlatformService {
 
     public Map<String, Object> dismissReport(String reportId) {
         Document found = findOne("reputation_reports", "id", reportId, "Report not found");
-        Query rq = Query.query(Criteria.where("id").is(reportId));
+        String currentStatus = found.getString("status");
+        if (!"PENDING".equalsIgnoreCase(currentStatus)) {
+            throw new BadRequestException("Báo cáo vi phạm này đã được xử lý trước đó (trạng thái: " + currentStatus + ")");
+        }
+
+        Query rq = Query.query(new Criteria().andOperator(
+                Criteria.where("id").is(reportId),
+                Criteria.where("status").is("PENDING")
+        ));
         Update ru = new Update().set("status", "DISMISSED").set("resolution", "Dismissed (No violation)");
-        mongoTemplate.updateFirst(rq, ru, "reputation_reports");
+        var updateResult = mongoTemplate.updateFirst(rq, ru, "reputation_reports");
+        if (updateResult.getModifiedCount() == 0) {
+            throw new BadRequestException("Báo cáo vi phạm này đã được xử lý bởi một phiên khác.");
+        }
+
         found.put("status", "DISMISSED");
         found.put("resolution", "Dismissed (No violation)");
         return publicDocument(found);
