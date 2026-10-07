@@ -111,11 +111,26 @@ public class PlatformService {
         Query query = new Query();
         addExactFilter(query, "status", status);
         addExactFilter(query, "game", game);
-        return find(query, "tournaments");
+        List<Map<String, Object>> list = find(query, "tournaments");
+        for (Map<String, Object> t : list) {
+            // Chuẩn hóa 2 schema cũ và mới để client đọc trường nào cũng có giá trị
+            if (!t.containsKey("title") && t.containsKey("name")) t.put("title", t.get("name"));
+            if (!t.containsKey("name") && t.containsKey("title")) t.put("name", t.get("title"));
+            if (!t.containsKey("prizePool") && t.containsKey("prize")) t.put("prizePool", t.get("prize"));
+            if (!t.containsKey("prize") && t.containsKey("prizePool")) t.put("prize", t.get("prizePool"));
+            if (!t.containsKey("startDate") && t.containsKey("countdown")) t.put("startDate", t.get("countdown"));
+            if (!t.containsKey("countdown") && t.containsKey("startDate")) t.put("countdown", t.get("startDate"));
+        }
+        return list;
     }
 
     public Map<String, Object> getTournament(String id) {
-        return publicDocument(findOne("tournaments", "id", id, "Tournament not found"));
+        Map<String, Object> t = publicDocument(findOne("tournaments", "id", id, "Tournament not found"));
+        if (!t.containsKey("title") && t.containsKey("name")) t.put("title", t.get("name"));
+        if (!t.containsKey("name") && t.containsKey("title")) t.put("name", t.get("title"));
+        if (!t.containsKey("prizePool") && t.containsKey("prize")) t.put("prizePool", t.get("prize"));
+        if (!t.containsKey("prize") && t.containsKey("prizePool")) t.put("prize", t.get("prizePool"));
+        return t;
     }
 
     public List<Map<String, Object>> getBracket(String tournamentId) {
@@ -128,16 +143,25 @@ public class PlatformService {
 
     public Map<String, Object> createTournament(Map<String, Object> payload) {
         String id = "tourn_" + UUID.randomUUID().toString().substring(0, 8);
+        String title = (String) payload.getOrDefault("title", payload.getOrDefault("name", "New Esports Tournament"));
+        String prize = (String) payload.getOrDefault("prizePool", payload.getOrDefault("prize", "$1,000 USD"));
+        int maxTeams = payload.get("maxTeams") != null ? ((Number) payload.get("maxTeams")).intValue() : 16;
+        String startDate = (String) payload.getOrDefault("startDate", payload.getOrDefault("countdown", "TBD"));
+
         Document doc = new Document();
         doc.put("id", id);
-        doc.put("title", payload.getOrDefault("title", "New Esports Tournament"));
+        doc.put("title", title);
+        doc.put("name", title); // Schema cũ
         doc.put("game", payload.getOrDefault("game", "VALORANT"));
         doc.put("format", payload.getOrDefault("format", "5v5 Single Elimination"));
-        doc.put("prizePool", payload.getOrDefault("prizePool", "$1,000 USD"));
-        doc.put("maxTeams", payload.getOrDefault("maxTeams", 16));
+        doc.put("prizePool", prize);
+        doc.put("prize", prize); // Schema cũ
+        doc.put("maxTeams", maxTeams);
+        doc.put("teams", "0 / " + maxTeams); // Schema cũ
         doc.put("registeredTeams", 0);
         doc.put("status", payload.getOrDefault("status", "UPCOMING"));
-        doc.put("startDate", payload.getOrDefault("startDate", "TBD"));
+        doc.put("startDate", startDate);
+        doc.put("countdown", startDate); // Schema cũ
         doc.put("bannerUrl", payload.getOrDefault("bannerUrl", "https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=800&q=80"));
         doc.put("createdAt", Instant.now());
         mongoTemplate.insert(doc, "tournaments");
@@ -159,7 +183,12 @@ public class PlatformService {
     }
 
     public Map<String, Object> registerTournament(String tournamentId, TournamentRegistrationRequest request, String username) {
-        findOne("tournaments", "id", tournamentId, "Tournament not found");
+        Document tournament = findOne("tournaments", "id", tournamentId, "Tournament not found");
+        String status = tournament.getString("status");
+        if (status != null && (status.equalsIgnoreCase("COMPLETED") || status.equalsIgnoreCase("CANCELLED"))) {
+            throw new BadRequestException("Giải đấu đã ở trạng thái " + status + " và không còn tiếp nhận đăng ký mới.");
+        }
+
         mongoTemplate.insert(doc(
                 "tournamentId", tournamentId,
                 "teamName", request.teamName(),

@@ -180,12 +180,8 @@ public class AuthServiceImpl implements AuthService {
         String cleanEmail = request.getEmail().trim().toLowerCase();
         String cleanUsername = request.getUsername().trim();
 
-        if (userRepository.existsByEmail(cleanEmail)) {
-            throw new BadRequestException("Email đã được sử dụng bởi một tài khoản khác");
-        }
-
-        if (userRepository.existsByUsername(cleanUsername)) {
-            throw new BadRequestException("Username đã tồn tại, vui lòng chọn tên khác");
+        if (userRepository.existsByEmail(cleanEmail) || userRepository.existsByUsername(cleanUsername)) {
+            throw new BadRequestException("Thông tin đăng ký (email hoặc username) đã được sử dụng. Vui lòng kiểm tra lại.");
         }
 
         // Rate limit: Kiểm tra xem mã OTP gần nhất có được gửi trong vòng 60 giây qua không

@@ -17,6 +17,7 @@ public class EmailVerification {
 
     private String otp;
 
+    @Indexed(expireAfterSeconds = 0)
     private Instant expiresAt;
 
     private Instant createdAt = Instant.now();
