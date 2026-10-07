@@ -190,8 +190,10 @@ The first startup creates 8 game hubs. Every game has one `#general` text channe
 | POST | `/api/community/games/{gameId}/rooms` | Authenticated | Create an extra voice room; caller becomes owner |
 | PATCH | `/api/community/rooms/{roomId}` | Owner/mod/admin | Rename, resize or lock a room |
 | DELETE | `/api/community/rooms/{roomId}` | Owner/mod/admin | Delete a non-default room |
-| PATCH | `/api/community/rooms/{roomId}/members/{userId}` | Owner/mod/admin | Mute/unmute a room member |
-| DELETE | `/api/community/rooms/{roomId}/members/{userId}` | Owner/mod/admin | Kick a room member |
+| PATCH | `/api/community/rooms/{roomId}/members/{userId}` | Owner/mod/admin | Server-mute a member in LiveKit (`{ "muted": true }`); remote unmute is intentionally forbidden |
+| DELETE | `/api/community/rooms/{roomId}/members/{userId}` | Owner/mod/admin | Kick a member from LiveKit |
+| POST | `/api/community/rooms/{roomId}/voice-token` | Authenticated | Issue a 5-minute microphone-only LiveKit token |
+| POST | `/api/livekit/webhook` | Signed LiveKit webhook | Synchronize verified join/leave presence and session audit |
 
 Message body:
 
@@ -205,7 +207,7 @@ Create room body:
 { "name": "Ranked Team A", "capacity": 5 }
 ```
 
-Room state and chat history are persisted by this REST API. Real-time delivery and actual voice media should be connected later through WebSocket plus a WebRTC provider such as LiveKit; audio is not transported through REST.
+Room state and chat history are persisted by the REST API. Voice media travels directly between the browser and LiveKit SFU over WebRTC; Spring Boot only validates room access and signs short-lived participant tokens. See `VOICE_CHAT_SETUP.md` for local and production setup.
 
 ## MongoDB collections
 
@@ -217,7 +219,7 @@ The `gametrust` database contains:
 - Clan: `clans`, `clan_join_requests`
 - Reputation: `reputation_metrics`, `reputation_reports`, `reputation_reviews`, `top_rep_players`
 - Social: `social_posts`, `online_players`, `trending_tags`
-- Communities: `game_hubs`, `community_channels`, `channel_messages`, `voice_room_members`
+- Communities: `game_hubs`, `community_channels`, `channel_messages`, `voice_room_members`, `voice_session_audit`
 
 Unique MongoDB indexes protect `users.username`, `users.email`, and `refresh_tokens.token`. Refresh-token documents also have a TTL index on `expiresAt`.
 

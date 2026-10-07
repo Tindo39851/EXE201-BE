@@ -10,6 +10,7 @@ import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.index.Index;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 
@@ -175,17 +176,29 @@ public class DatabaseSeeder implements CommandLineRunner {
         mongoTemplate.indexOps("voice_room_members").ensureIndex(new Index().on("userId", Sort.Direction.ASC).unique());
         mongoTemplate.indexOps("voice_room_members").ensureIndex(
                 new Index().on("roomId", Sort.Direction.ASC).on("userId", Sort.Direction.ASC).unique());
+        mongoTemplate.indexOps("voice_session_audit").ensureIndex(
+                new Index().on("roomId", Sort.Direction.ASC).on("userId", Sort.Direction.ASC).on("joinedAt", Sort.Direction.DESC));
     }
 
     private void seedDefaultChannel(String id, String gameId, String name, String slug, String type,
                                     String ownerId, int position, Integer capacity) {
-        if (mongoTemplate.exists(Query.query(Criteria.where("id").is(id)), "community_channels")) return;
+        Query channelQuery = Query.query(Criteria.where("id").is(id));
+        Document existing = mongoTemplate.findOne(channelQuery, Document.class, "community_channels");
+        if (existing != null) {
+            if ("VOICE".equals(type) && (existing.getString("livekitRoomName") == null
+                    || existing.getString("livekitRoomName").isBlank())) {
+                mongoTemplate.updateFirst(channelQuery,
+                        Update.update("livekitRoomName", "voice_" + id), "community_channels");
+            }
+            return;
+        }
         Document channel = d(
                 "id", id,
                 "gameId", gameId,
                 "name", name,
                 "slug", slug,
                 "type", type,
+                "livekitRoomName", "VOICE".equals(type) ? "voice_" + id : null,
                 "ownerId", ownerId,
                 "ownerUsername", "admin",
                 "locked", false,

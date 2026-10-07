@@ -6,8 +6,10 @@ import com.gametrust.backend.dto.community.CommunityRequests.SendMessageRequest;
 import com.gametrust.backend.dto.community.CommunityRequests.UpdateMessageRequest;
 import com.gametrust.backend.dto.community.CommunityRequests.UpdateRoomRequest;
 import com.gametrust.backend.dto.community.CommunityRequests.UpdateVoiceMemberRequest;
+import com.gametrust.backend.dto.community.VoiceJoinResponse;
 import com.gametrust.backend.security.UserPrincipal;
 import com.gametrust.backend.service.CommunityService;
+import com.gametrust.backend.service.LiveKitVoiceService;
 import jakarta.validation.Valid;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -28,9 +30,11 @@ import java.util.Map;
 public class CommunityController {
 
     private final CommunityService service;
+    private final LiveKitVoiceService liveKitVoiceService;
 
-    public CommunityController(CommunityService service) {
+    public CommunityController(CommunityService service, LiveKitVoiceService liveKitVoiceService) {
         this.service = service;
+        this.liveKitVoiceService = liveKitVoiceService;
     }
 
     @GetMapping("/games")
@@ -114,6 +118,13 @@ public class CommunityController {
             @PathVariable String roomId,
             @AuthenticationPrincipal UserPrincipal user) {
         return ApiResponse.success("Joined voice room", service.joinVoiceRoom(roomId, user));
+    }
+
+    @PostMapping("/rooms/{roomId}/voice-token")
+    public ApiResponse<VoiceJoinResponse> createVoiceToken(
+            @PathVariable String roomId,
+            @AuthenticationPrincipal UserPrincipal user) {
+        return ApiResponse.success("Voice credentials created", liveKitVoiceService.createJoinToken(roomId, user));
     }
 
     @PostMapping("/rooms/{roomId}/leave")

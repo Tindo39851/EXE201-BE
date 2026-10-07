@@ -36,9 +36,11 @@ public class CommunityService {
     private static final String VOICE_MEMBERS = "voice_room_members";
 
     private final MongoTemplate mongoTemplate;
+    private final LiveKitRoomAdminService liveKitRoomAdminService;
 
-    public CommunityService(MongoTemplate mongoTemplate) {
+    public CommunityService(MongoTemplate mongoTemplate, LiveKitRoomAdminService liveKitRoomAdminService) {
         this.mongoTemplate = mongoTemplate;
+        this.liveKitRoomAdminService = liveKitRoomAdminService;
     }
 
     public List<Map<String, Object>> getGames() {
@@ -136,6 +138,7 @@ public class CommunityService {
                 .append("name", request.name().trim())
                 .append("slug", slug(request.name()) + "-" + shortId().substring(0, 4))
                 .append("type", "VOICE")
+                .append("livekitRoomName", "voice_" + gameId + "_" + shortId())
                 .append("ownerId", user.getId())
                 .append("ownerUsername", user.getUsername())
                 .append("capacity", capacity)
@@ -244,8 +247,12 @@ public class CommunityService {
         ));
         Document member = mongoTemplate.findOne(query, Document.class, VOICE_MEMBERS);
         if (member == null) throw new ResourceNotFoundException("Voice member not found");
-        mongoTemplate.updateFirst(query, Update.update("muted", request.muted()), VOICE_MEMBERS);
-        member.put("muted", request.muted());
+        if (!request.muted()) {
+            throw new BadRequestException("Moderators cannot remotely unmute a participant");
+        }
+        liveKitRoomAdminService.muteMicrophone(liveKitRoomName(room), memberUserId);
+        mongoTemplate.updateFirst(query, Update.update("muted", true), VOICE_MEMBERS);
+        member.put("muted", true);
         return publicDocument(member);
     }
 
@@ -259,7 +266,13 @@ public class CommunityService {
         if (!mongoTemplate.exists(query, VOICE_MEMBERS)) {
             throw new ResourceNotFoundException("Voice member not found");
         }
+        liveKitRoomAdminService.removeParticipant(liveKitRoomName(room), memberUserId);
         mongoTemplate.remove(query, VOICE_MEMBERS);
+    }
+
+    private String liveKitRoomName(Document room) {
+        String name = room.getString("livekitRoomName");
+        return name == null || name.isBlank() ? room.getString("id") : name;
     }
 
     private Document requireChannel(String channelId, String expectedType) {
