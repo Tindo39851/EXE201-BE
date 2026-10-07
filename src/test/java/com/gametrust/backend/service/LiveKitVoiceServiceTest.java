@@ -1,6 +1,7 @@
 package com.gametrust.backend.service;
 
 import com.auth0.jwt.JWT;
+import com.auth0.jwt.algorithms.Algorithm;
 import com.auth0.jwt.interfaces.DecodedJWT;
 import com.gametrust.backend.config.LiveKitProperties;
 import com.gametrust.backend.dto.community.VoiceJoinResponse;
@@ -36,6 +37,8 @@ class LiveKitVoiceServiceTest {
 
     @Mock
     private MongoTemplate mongoTemplate;
+    @Mock
+    private LiveKitRoomAdminService liveKitRoomAdminService;
 
     private LiveKitProperties properties;
     private LiveKitVoiceService service;
@@ -48,7 +51,7 @@ class LiveKitVoiceServiceTest {
         properties.setApiKey("devkey");
         properties.setApiSecret("secret");
         properties.setTokenTtlSeconds(300);
-        service = new LiveKitVoiceService(mongoTemplate, properties);
+        service = new LiveKitVoiceService(mongoTemplate, properties, liveKitRoomAdminService);
         member = principal("user-123", "playerOne", "ROLE_MEMBER");
     }
 
@@ -56,7 +59,6 @@ class LiveKitVoiceServiceTest {
     void createsShortLivedMicrophoneOnlyTokenFromAuthenticatedUser() {
         whenRoom(voiceRoom(false, 10, "owner-1"));
         when(mongoTemplate.count(any(Query.class), eq("voice_room_members"))).thenReturn(2L);
-        when(mongoTemplate.exists(any(Query.class), eq("voice_room_members"))).thenReturn(false);
 
         VoiceJoinResponse response = service.createJoinToken("valorant_voice_1", member);
 
@@ -67,7 +69,10 @@ class LiveKitVoiceServiceTest {
         assertNotNull(response.participantToken());
         assertFalse(response.participantToken().contains(properties.getApiSecret()));
 
-        DecodedJWT jwt = JWT.decode(response.participantToken());
+        DecodedJWT jwt = JWT.require(Algorithm.HMAC256(properties.getApiSecret()))
+                .withIssuer(properties.getApiKey())
+                .build()
+                .verify(response.participantToken());
         assertEquals("user-123", jwt.getSubject());
         assertEquals("playerOne", jwt.getClaim("name").asString());
         Map<String, Object> video = jwt.getClaim("video").asMap();
@@ -109,7 +114,6 @@ class LiveKitVoiceServiceTest {
     void allowsLockedRoomForOwner() {
         whenRoom(voiceRoom(true, 10, "user-123"));
         when(mongoTemplate.count(any(Query.class), eq("voice_room_members"))).thenReturn(0L);
-        when(mongoTemplate.exists(any(Query.class), eq("voice_room_members"))).thenReturn(false);
         assertNotNull(service.createJoinToken("valorant_voice_1", member).participantToken());
     }
 
@@ -118,7 +122,6 @@ class LiveKitVoiceServiceTest {
         UserPrincipal moderator = principal("mod-1", "moderator", "ROLE_MODERATOR");
         whenRoom(voiceRoom(true, 10, "owner-1"));
         when(mongoTemplate.count(any(Query.class), eq("voice_room_members"))).thenReturn(0L);
-        when(mongoTemplate.exists(any(Query.class), eq("voice_room_members"))).thenReturn(false);
         assertNotNull(service.createJoinToken("valorant_voice_1", moderator).participantToken());
     }
 
@@ -126,7 +129,6 @@ class LiveKitVoiceServiceTest {
     void rejectsNewParticipantWhenRoomIsFull() {
         whenRoom(voiceRoom(false, 2, "owner-1"));
         when(mongoTemplate.count(any(Query.class), eq("voice_room_members"))).thenReturn(2L);
-        when(mongoTemplate.exists(any(Query.class), eq("voice_room_members"))).thenReturn(false);
         assertThrows(BadRequestException.class,
                 () -> service.createJoinToken("valorant_voice_1", member));
     }
@@ -135,8 +137,32 @@ class LiveKitVoiceServiceTest {
     void permitsReconnectWhenPresenceAlreadyExistsInFullRoom() {
         whenRoom(voiceRoom(false, 2, "owner-1"));
         when(mongoTemplate.count(any(Query.class), eq("voice_room_members"))).thenReturn(2L);
-        when(mongoTemplate.exists(any(Query.class), eq("voice_room_members"))).thenReturn(true);
+        when(mongoTemplate.findOne(any(Query.class), eq(Document.class), eq("voice_room_members")))
+                .thenReturn(new Document("roomId", "valorant_voice_1"));
         assertNotNull(service.createJoinToken("valorant_voice_1", member).participantToken());
+    }
+
+    @Test
+    void rejectsJoiningAnotherRoomWhilePresenceIsActive() {
+        whenRoom(voiceRoom(false, 10, "owner-1"));
+        when(mongoTemplate.findOne(any(Query.class), eq(Document.class), eq("voice_room_members")))
+                .thenReturn(new Document("roomId", "other-room"));
+
+        assertThrows(BadRequestException.class,
+                () -> service.createJoinToken("valorant_voice_1", member));
+    }
+
+    @Test
+    void keepsServerMutedParticipantFromPublishingAfterReconnect() {
+        whenRoom(voiceRoom(false, 10, "owner-1"));
+        when(mongoTemplate.exists(any(Query.class), eq("voice_room_moderation"))).thenReturn(true);
+
+        VoiceJoinResponse response = service.createJoinToken("valorant_voice_1", member);
+        DecodedJWT jwt = JWT.require(Algorithm.HMAC256(properties.getApiSecret()))
+                .withIssuer(properties.getApiKey()).build().verify(response.participantToken());
+        Map<String, Object> video = jwt.getClaim("video").asMap();
+        assertEquals(false, video.get("canPublish"));
+        assertFalse(video.containsKey("canPublishSources"));
     }
 
     @Test

@@ -34,6 +34,7 @@ public class CommunityService {
     private static final String CHANNELS = "community_channels";
     private static final String MESSAGES = "channel_messages";
     private static final String VOICE_MEMBERS = "voice_room_members";
+    private static final String VOICE_MODERATION = "voice_room_moderation";
 
     private final MongoTemplate mongoTemplate;
     private final LiveKitRoomAdminService liveKitRoomAdminService;
@@ -180,6 +181,7 @@ public class CommunityService {
             throw new BadRequestException("Default voice rooms cannot be deleted");
         }
         mongoTemplate.remove(Query.query(Criteria.where("roomId").is(roomId)), VOICE_MEMBERS);
+        mongoTemplate.remove(Query.query(Criteria.where("roomId").is(roomId)), VOICE_MODERATION);
         mongoTemplate.remove(Query.query(Criteria.where("id").is(roomId)), CHANNELS);
     }
 
@@ -247,12 +249,23 @@ public class CommunityService {
         ));
         Document member = mongoTemplate.findOne(query, Document.class, VOICE_MEMBERS);
         if (member == null) throw new ResourceNotFoundException("Voice member not found");
-        if (!request.muted()) {
-            throw new BadRequestException("Moderators cannot remotely unmute a participant");
+        if (request.muted()) {
+            liveKitRoomAdminService.muteMicrophone(liveKitRoomName(room), memberUserId);
+            mongoTemplate.upsert(query, new Update()
+                    .set("roomId", roomId)
+                    .set("userId", memberUserId)
+                    .set("serverMuted", true)
+                    .set("moderatedBy", user.getId())
+                    .set("updatedAt", Instant.now()), VOICE_MODERATION);
+            mongoTemplate.updateFirst(query, new Update().set("muted", true).set("serverMuted", true), VOICE_MEMBERS);
+            member.put("muted", true);
+            member.put("serverMuted", true);
+        } else {
+            // A moderator only removes the server restriction. The participant must unmute their own microphone.
+            mongoTemplate.remove(query, VOICE_MODERATION);
+            mongoTemplate.updateFirst(query, Update.update("serverMuted", false), VOICE_MEMBERS);
+            member.put("serverMuted", false);
         }
-        liveKitRoomAdminService.muteMicrophone(liveKitRoomName(room), memberUserId);
-        mongoTemplate.updateFirst(query, Update.update("muted", true), VOICE_MEMBERS);
-        member.put("muted", true);
         return publicDocument(member);
     }
 
@@ -268,11 +281,11 @@ public class CommunityService {
         }
         liveKitRoomAdminService.removeParticipant(liveKitRoomName(room), memberUserId);
         mongoTemplate.remove(query, VOICE_MEMBERS);
+        mongoTemplate.remove(query, VOICE_MODERATION);
     }
 
     private String liveKitRoomName(Document room) {
-        String name = room.getString("livekitRoomName");
-        return name == null || name.isBlank() ? room.getString("id") : name;
+        return LiveKitRoomNames.resolve(room);
     }
 
     private Document requireChannel(String channelId, String expectedType) {

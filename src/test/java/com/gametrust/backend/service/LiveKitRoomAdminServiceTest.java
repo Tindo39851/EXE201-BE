@@ -5,6 +5,7 @@ import io.livekit.server.RoomServiceClient;
 import livekit.LivekitModels.ParticipantInfo;
 import livekit.LivekitModels.TrackInfo;
 import livekit.LivekitModels.TrackSource;
+import livekit.LivekitModels.Room;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -19,6 +20,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 
 @ExtendWith(MockitoExtension.class)
 class LiveKitRoomAdminServiceTest {
@@ -31,6 +34,8 @@ class LiveKitRoomAdminServiceTest {
     private Call<TrackInfo> muteCall;
     @Mock
     private Call<Void> removeCall;
+    @Mock
+    private Call<Room> roomCall;
 
     private LiveKitRoomAdminService service;
 
@@ -83,19 +88,30 @@ class LiveKitRoomAdminServiceTest {
 
     @Test
     void removesParticipantFromLiveKit() throws IOException {
-        when(client.removeParticipant("room-1", "user-1")).thenReturn(removeCall);
+        when(client.removeParticipant(eq("room-1"), eq("user-1"), anyLong())).thenReturn(removeCall);
         when(removeCall.execute()).thenReturn(Response.success(null));
 
         service.removeParticipant("room-1", "user-1");
 
-        verify(client).removeParticipant("room-1", "user-1");
+        verify(client).removeParticipant(eq("room-1"), eq("user-1"), anyLong());
     }
 
     @Test
     void reportsRemoveFailureWhenLiveKitIsUnavailable() throws IOException {
-        when(client.removeParticipant("room-1", "user-1")).thenReturn(removeCall);
+        when(client.removeParticipant(eq("room-1"), eq("user-1"), anyLong())).thenReturn(removeCall);
         when(removeCall.execute()).thenThrow(new IOException("offline"));
 
         assertThrows(BadRequestException.class, () -> service.removeParticipant("room-1", "user-1"));
+    }
+
+    @Test
+    void createsRoomWithLiveKitEnforcedCapacity() throws IOException {
+        Room room = Room.newBuilder().setName("room-1").setMaxParticipants(5).build();
+        when(client.createRoom("room-1", null, 5)).thenReturn(roomCall);
+        when(roomCall.execute()).thenReturn(Response.success(room));
+
+        service.ensureRoom("room-1", 5);
+
+        verify(client).createRoom("room-1", null, 5);
     }
 }

@@ -188,6 +188,8 @@ public class DatabaseSeeder implements CommandLineRunner {
                 new Index().on("roomId", Sort.Direction.ASC).on("userId", Sort.Direction.ASC).unique());
         mongoTemplate.indexOps("voice_session_audit").ensureIndex(
                 new Index().on("roomId", Sort.Direction.ASC).on("userId", Sort.Direction.ASC).on("joinedAt", Sort.Direction.DESC));
+        mongoTemplate.indexOps("voice_room_moderation").ensureIndex(
+                new Index().on("roomId", Sort.Direction.ASC).on("userId", Sort.Direction.ASC).unique());
     }
 
     private void removeUnsupportedCommunityGames() {
@@ -203,6 +205,7 @@ public class DatabaseSeeder implements CommandLineRunner {
             mongoTemplate.remove(Query.query(Criteria.where("channelId").in(channelIds)), "channel_messages");
             mongoTemplate.remove(Query.query(Criteria.where("roomId").in(channelIds)), "voice_room_members");
             mongoTemplate.remove(Query.query(Criteria.where("roomId").in(channelIds)), "voice_session_audit");
+            mongoTemplate.remove(Query.query(Criteria.where("roomId").in(channelIds)), "voice_room_moderation");
         }
         mongoTemplate.remove(unsupportedChannels, "community_channels");
         mongoTemplate.remove(Query.query(Criteria.where("id").nin(COMMUNITY_GAME_IDS)), "game_hubs");

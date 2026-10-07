@@ -1,6 +1,8 @@
 package com.gametrust.backend.service;
 
 import com.gametrust.backend.exception.UnauthorizedException;
+import com.gametrust.backend.config.LiveKitProperties;
+import com.gametrust.backend.repository.UserRepository;
 import livekit.LivekitModels;
 import livekit.LivekitWebhook;
 import org.bson.Document;
@@ -33,18 +35,23 @@ class LiveKitWebhookServiceTest {
 
     @Mock
     private LiveKitWebhookVerifier verifier;
+    @Mock
+    private LiveKitRoomAdminService liveKitRoomAdminService;
+    @Mock
+    private UserRepository userRepository;
 
     private LiveKitWebhookService service;
 
     @BeforeEach
     void setUp() {
-        service = new LiveKitWebhookService(mongoTemplate, verifier);
+        service = new LiveKitWebhookService(mongoTemplate, verifier, liveKitRoomAdminService, userRepository);
     }
 
     @Test
     void verifiedParticipantJoinedUpsertsPresenceAndCreatesAudit() {
         when(mongoTemplate.findOne(any(Query.class), eq(Document.class), eq("community_channels")))
                 .thenReturn(channel());
+        when(mongoTemplate.exists(any(Query.class), eq("voice_room_moderation"))).thenReturn(false);
         when(mongoTemplate.exists(any(Query.class), eq("voice_session_audit"))).thenReturn(false);
 
         Map<String, Object> result = service.processVerifiedEvent(event("participant_joined", true));
@@ -83,6 +90,29 @@ class LiveKitWebhookServiceTest {
     void rejectsMissingWebhookSignatureBeforeDecoding() {
         assertThrows(UnauthorizedException.class, () -> service.receive("{}", null));
         verify(verifier, never()).decode(any(), any());
+    }
+
+    @Test
+    void realVerifierRejectsAnInvalidSignature() {
+        LiveKitProperties properties = new LiveKitProperties();
+        properties.setApiKey("devkey");
+        properties.setApiSecret("secret");
+        LiveKitWebhookVerifier realVerifier = new LiveKitWebhookVerifier(properties);
+
+        assertThrows(RuntimeException.class, () -> realVerifier.decode("{}", "Bearer invalid"));
+    }
+
+    @Test
+    void lockedRoomRevokesOldTokenAndDoesNotCreatePresence() {
+        Document lockedRoom = channel().append("locked", true).append("ownerId", "owner-1");
+        when(mongoTemplate.findOne(any(Query.class), eq(Document.class), eq("community_channels")))
+                .thenReturn(lockedRoom);
+
+        Map<String, Object> result = service.processVerifiedEvent(event("participant_joined", true));
+
+        assertTrue((Boolean) result.get("processed"));
+        verify(liveKitRoomAdminService).removeParticipant("voice_valorant_voice_1", "user-123");
+        verify(mongoTemplate, never()).upsert(any(Query.class), any(Update.class), eq("voice_room_members"));
     }
 
     @Test

@@ -1,6 +1,8 @@
 package com.gametrust.backend.service;
 
 import com.gametrust.backend.exception.UnauthorizedException;
+import com.gametrust.backend.entity.Role;
+import com.gametrust.backend.repository.UserRepository;
 import livekit.LivekitModels;
 import livekit.LivekitWebhook;
 import org.bson.Document;
@@ -12,6 +14,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.Instant;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -21,13 +24,20 @@ public class LiveKitWebhookService {
     private static final String CHANNELS = "community_channels";
     private static final String VOICE_MEMBERS = "voice_room_members";
     private static final String VOICE_AUDIT = "voice_session_audit";
+    private static final String VOICE_MODERATION = "voice_room_moderation";
 
     private final MongoTemplate mongoTemplate;
     private final LiveKitWebhookVerifier verifier;
+    private final LiveKitRoomAdminService liveKitRoomAdminService;
+    private final UserRepository userRepository;
 
-    public LiveKitWebhookService(MongoTemplate mongoTemplate, LiveKitWebhookVerifier verifier) {
+    public LiveKitWebhookService(MongoTemplate mongoTemplate, LiveKitWebhookVerifier verifier,
+                                 LiveKitRoomAdminService liveKitRoomAdminService,
+                                 UserRepository userRepository) {
         this.mongoTemplate = mongoTemplate;
         this.verifier = verifier;
+        this.liveKitRoomAdminService = liveKitRoomAdminService;
+        this.userRepository = userRepository;
     }
 
     public Map<String, Object> receive(String rawBody, String authorizationHeader) {
@@ -67,7 +77,24 @@ public class LiveKitWebhookService {
         LivekitModels.ParticipantInfo participant = event.getParticipant();
         String userId = participant.getIdentity();
         if (userId == null || userId.isBlank()) return false;
+
+        Document currentPresence = mongoTemplate.findOne(
+                Query.query(Criteria.where("userId").is(userId)), Document.class, VOICE_MEMBERS);
+        boolean joinedDifferentRoom = currentPresence != null
+                && !room.getString("id").equals(currentPresence.getString("roomId"));
+        boolean lockedForUser = Boolean.TRUE.equals(room.getBoolean("locked")) && !canManage(room, userId);
+        if (joinedDifferentRoom || lockedForUser) {
+            // Revokes this and every older token so a locked/cross-room join cannot reconnect in a loop.
+            liveKitRoomAdminService.removeParticipant(event.getRoom().getName(), userId);
+            return true;
+        }
+
         Instant now = Instant.now();
+        boolean serverMuted = mongoTemplate.exists(new Query(new Criteria().andOperator(
+                Criteria.where("roomId").is(room.getString("id")),
+                Criteria.where("userId").is(userId),
+                Criteria.where("serverMuted").is(true)
+        )), VOICE_MODERATION);
 
         Query memberQuery = Query.query(Criteria.where("userId").is(userId));
         Update memberUpdate = new Update()
@@ -77,7 +104,8 @@ public class LiveKitWebhookService {
                 .set("userId", userId)
                 .set("username", displayName(participant))
                 .set("livekitParticipantSid", participant.getSid())
-                .set("muted", true)
+                .set("muted", serverMuted || participant.getTracksList().stream().allMatch(LivekitModels.TrackInfo::getMuted))
+                .set("serverMuted", serverMuted)
                 .set("joinedAt", now);
         mongoTemplate.upsert(memberQuery, memberUpdate, VOICE_MEMBERS);
 
@@ -130,8 +158,27 @@ public class LiveKitWebhookService {
     }
 
     private Document findChannel(String livekitRoomName) {
-        return mongoTemplate.findOne(Query.query(Criteria.where("livekitRoomName").is(livekitRoomName)),
+        Document channel = mongoTemplate.findOne(Query.query(Criteria.where("livekitRoomName").is(livekitRoomName)),
                 Document.class, CHANNELS);
+        if (channel != null) return channel;
+
+        List<Document> legacyRooms = mongoTemplate.find(
+                Query.query(Criteria.where("type").is("VOICE")), Document.class, CHANNELS);
+        for (Document legacyRoom : legacyRooms) {
+            if (livekitRoomName.equals(LiveKitRoomNames.resolve(legacyRoom))) {
+                mongoTemplate.updateFirst(Query.query(Criteria.where("id").is(legacyRoom.getString("id"))),
+                        Update.update("livekitRoomName", livekitRoomName), CHANNELS);
+                return legacyRoom;
+            }
+        }
+        return null;
+    }
+
+    private boolean canManage(Document room, String userId) {
+        if (userId.equals(room.getString("ownerId"))) return true;
+        return userRepository.findById(userId)
+                .map(user -> user.getRole() == Role.ADMIN || user.getRole() == Role.MODERATOR)
+                .orElse(false);
     }
 
     private String displayName(LivekitModels.ParticipantInfo participant) {

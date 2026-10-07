@@ -16,6 +16,7 @@ import org.bson.Document;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 
@@ -26,13 +27,17 @@ public class LiveKitVoiceService {
 
     private static final String CHANNELS = "community_channels";
     private static final String VOICE_MEMBERS = "voice_room_members";
+    private static final String VOICE_MODERATION = "voice_room_moderation";
 
     private final MongoTemplate mongoTemplate;
     private final LiveKitProperties properties;
+    private final LiveKitRoomAdminService liveKitRoomAdminService;
 
-    public LiveKitVoiceService(MongoTemplate mongoTemplate, LiveKitProperties properties) {
+    public LiveKitVoiceService(MongoTemplate mongoTemplate, LiveKitProperties properties,
+                               LiveKitRoomAdminService liveKitRoomAdminService) {
         this.mongoTemplate = mongoTemplate;
         this.properties = properties;
+        this.liveKitRoomAdminService = liveKitRoomAdminService;
     }
 
     public VoiceJoinResponse createJoinToken(String roomId, UserPrincipal user) {
@@ -49,33 +54,48 @@ public class LiveKitVoiceService {
             throw new AccessDeniedException("This voice room is locked");
         }
 
+        Document currentPresence = mongoTemplate.findOne(
+                Query.query(Criteria.where("userId").is(user.getId())), Document.class, VOICE_MEMBERS);
+        if (currentPresence != null && !roomId.equals(currentPresence.getString("roomId"))) {
+            throw new BadRequestException("Leave the current voice room before joining another one");
+        }
+
         long online = mongoTemplate.count(Query.query(Criteria.where("roomId").is(roomId)), VOICE_MEMBERS);
         int capacity = room.getInteger("capacity", 10);
-        boolean alreadyPresent = mongoTemplate.exists(new Query(new Criteria().andOperator(
-                Criteria.where("roomId").is(roomId),
-                Criteria.where("userId").is(user.getId())
-        )), VOICE_MEMBERS);
+        boolean alreadyPresent = currentPresence != null;
         if (!alreadyPresent && online >= capacity) {
             throw new BadRequestException("This voice room is full");
         }
 
-        String livekitRoomName = room.getString("livekitRoomName");
-        if (livekitRoomName == null || livekitRoomName.isBlank()) {
-            livekitRoomName = "voice_" + roomId.replaceAll("[^A-Za-z0-9_-]", "_");
+        String livekitRoomName = LiveKitRoomNames.resolve(room);
+        if (room.getString("livekitRoomName") == null || room.getString("livekitRoomName").isBlank()) {
+            mongoTemplate.updateFirst(Query.query(Criteria.where("id").is(roomId)),
+                    Update.update("livekitRoomName", livekitRoomName), CHANNELS);
         }
+        // LiveKit enforces maxParticipants atomically, even when token requests race across instances.
+        liveKitRoomAdminService.ensureRoom(livekitRoomName, capacity);
+
+        boolean serverMuted = mongoTemplate.exists(new Query(new Criteria().andOperator(
+                Criteria.where("roomId").is(roomId),
+                Criteria.where("userId").is(user.getId()),
+                Criteria.where("serverMuted").is(true)
+        )), VOICE_MODERATION);
 
         AccessToken token = new AccessToken(properties.getApiKey(), properties.getApiSecret());
         token.setIdentity(user.getId());
         token.setName(user.getUsername());
+        // livekit-server 0.16.0 expects this value in milliseconds.
         token.setTtl(properties.getTokenTtlSeconds() * 1000L);
         token.addGrants(
                 new RoomJoin(true),
                 new RoomName(livekitRoomName),
-                new CanPublish(true),
-                new CanPublishSources(List.of("microphone")),
+                new CanPublish(!serverMuted),
                 new CanSubscribe(true),
                 new CanPublishData(false)
         );
+        if (!serverMuted) {
+            token.addGrants(new CanPublishSources(List.of("microphone")));
+        }
 
         return new VoiceJoinResponse(
                 properties.getServerUrl(),
@@ -87,12 +107,7 @@ public class LiveKitVoiceService {
     }
 
     private void validateConfiguration() {
-        if (isBlank(properties.getServerUrl()) || isBlank(properties.getApiKey()) || isBlank(properties.getApiSecret())) {
-            throw new IllegalStateException("LiveKit is not configured on the backend");
-        }
-        if (properties.getTokenTtlSeconds() < 30 || properties.getTokenTtlSeconds() > 900) {
-            throw new IllegalStateException("LiveKit token TTL must be between 30 and 900 seconds");
-        }
+        properties.validate();
     }
 
     private boolean canManage(Document room, UserPrincipal user) {
@@ -101,7 +116,4 @@ public class LiveKitVoiceService {
         return privileged || user.getId().equals(room.getString("ownerId"));
     }
 
-    private boolean isBlank(String value) {
-        return value == null || value.isBlank();
-    }
 }

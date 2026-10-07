@@ -38,17 +38,14 @@ Moderator mute and kick actions are also sent to LiveKit's server API before Mon
 
 ## 3. Configure and run Spring Boot
 
-The local defaults already match LiveKit development mode:
+Development defaults are intentionally isolated in the `local` Spring profile. Start the backend with:
 
 ```powershell
-$env:LIVEKIT_SERVER_URL='ws://localhost:7880'
-$env:LIVEKIT_API_KEY='devkey'
-$env:LIVEKIT_API_SECRET='secret'
-$env:LIVEKIT_TOKEN_TTL_SECONDS='300'
+$env:SPRING_PROFILES_ACTIVE='local'
 mvn.cmd spring-boot:run
 ```
 
-Do not expose `LIVEKIT_API_SECRET` through a `NEXT_PUBLIC_*` variable or commit a production secret.
+Outside the `local` profile, `LIVEKIT_SERVER_URL`, `LIVEKIT_API_KEY` and `LIVEKIT_API_SECRET` are required. Production rejects insecure remote WebSocket URLs and the local `devkey` / `secret` pair. Do not expose `LIVEKIT_API_SECRET` through a `NEXT_PUBLIC_*` variable or commit a production secret.
 
 The authenticated token endpoint is:
 
@@ -57,7 +54,7 @@ POST /api/community/rooms/{roomId}/voice-token
 Authorization: Bearer <GameTrust access token>
 ```
 
-It rejects unknown/non-voice rooms, locked rooms without owner/moderator permission, and full rooms. The participant identity always comes from the GameTrust JWT, never from request JSON.
+It rejects unknown/non-voice rooms, locked rooms without owner/moderator permission, cross-room joins and full rooms. LiveKit also enforces room capacity atomically. The participant identity always comes from the GameTrust JWT, never from request JSON.
 
 ## 4. Run the frontend
 

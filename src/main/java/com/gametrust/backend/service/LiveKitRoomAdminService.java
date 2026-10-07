@@ -4,6 +4,7 @@ import com.gametrust.backend.config.LiveKitProperties;
 import com.gametrust.backend.exception.BadRequestException;
 import io.livekit.server.RoomServiceClient;
 import livekit.LivekitModels.ParticipantInfo;
+import livekit.LivekitModels.Room;
 import livekit.LivekitModels.TrackInfo;
 import livekit.LivekitModels.TrackSource;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -20,7 +21,7 @@ public class LiveKitRoomAdminService {
     @Autowired
     public LiveKitRoomAdminService(LiveKitProperties properties) {
         this(RoomServiceClient.createClient(
-                toHttpUrl(properties.getServerUrl()),
+                properties.getHttpApiUrl(),
                 properties.getApiKey(),
                 properties.getApiSecret()
         ));
@@ -28,6 +29,15 @@ public class LiveKitRoomAdminService {
 
     LiveKitRoomAdminService(RoomServiceClient roomServiceClient) {
         this.roomServiceClient = roomServiceClient;
+    }
+
+    public void ensureRoom(String roomName, int capacity) {
+        try {
+            Response<Room> response = roomServiceClient.createRoom(roomName, null, capacity).execute();
+            requireBody(response, "LiveKit could not create or validate this room");
+        } catch (IOException ex) {
+            throw new BadRequestException("LiveKit is unavailable; voice room could not be joined");
+        }
     }
 
     public void muteMicrophone(String roomName, String participantIdentity) {
@@ -53,7 +63,7 @@ public class LiveKitRoomAdminService {
     public void removeParticipant(String roomName, String participantIdentity) {
         try {
             Response<Void> response = roomServiceClient
-                    .removeParticipant(roomName, participantIdentity)
+                    .removeParticipant(roomName, participantIdentity, System.currentTimeMillis())
                     .execute();
             if (!response.isSuccessful()) {
                 throw new BadRequestException("LiveKit could not remove this participant");
@@ -70,12 +80,4 @@ public class LiveKitRoomAdminService {
         return response.body();
     }
 
-    private static String toHttpUrl(String serverUrl) {
-        if (serverUrl == null || serverUrl.isBlank()) {
-            throw new IllegalArgumentException("livekit.server-url is required");
-        }
-        if (serverUrl.startsWith("wss://")) return "https://" + serverUrl.substring(6);
-        if (serverUrl.startsWith("ws://")) return "http://" + serverUrl.substring(5);
-        return serverUrl;
-    }
 }
