@@ -13,4 +13,10 @@ public interface AuthService {
     void logout(String refreshToken);
 
     UserResponse getCurrentUser(String username);
+
+    UserResponse updateProfile(String username, String avatarUrl);
+
+    void sendRegistrationOtp(SendOtpRequest request);
+
+    AuthResponse verifyAndRegister(VerifyOtpRegisterRequest request);
 }

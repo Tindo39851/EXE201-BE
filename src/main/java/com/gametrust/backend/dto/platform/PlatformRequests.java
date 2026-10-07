@@ -29,4 +29,17 @@ public final class PlatformRequests {
             String tag,
             String game) {
     }
+
+    public record CreateReviewRequest(
+            @NotBlank String user,
+            int stars,
+            @NotBlank String quote,
+            String badge) {
+    }
+
+    public record CreateReportRequest(
+            @NotBlank String user,
+            @NotBlank String type,
+            String reason) {
+    }
 }

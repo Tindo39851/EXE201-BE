@@ -13,18 +13,20 @@ public class UserResponse {
     private Role role;
     private int reputationScore;
     private String avatarUrl;
+    private boolean active = true;
     private Instant createdAt;
 
     public UserResponse() {
     }
 
-    public UserResponse(String id, String username, String email, Role role, int reputationScore, String avatarUrl, Instant createdAt) {
+    public UserResponse(String id, String username, String email, Role role, int reputationScore, String avatarUrl, boolean active, Instant createdAt) {
         this.id = id;
         this.username = username;
         this.email = email;
         this.role = role;
         this.reputationScore = reputationScore;
         this.avatarUrl = avatarUrl;
+        this.active = active;
         this.createdAt = createdAt;
     }
 
@@ -39,6 +41,7 @@ public class UserResponse {
                 user.getRole(),
                 user.getReputationScore(),
                 user.getAvatarUrl(),
+                user.isActive(),
                 user.getCreatedAt()
         );
     }
@@ -97,5 +100,13 @@ public class UserResponse {
 
     public void setCreatedAt(Instant createdAt) {
         this.createdAt = createdAt;
+    }
+
+    public boolean isActive() {
+        return active;
+    }
+
+    public void setActive(boolean active) {
+        this.active = active;
     }
 }

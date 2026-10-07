@@ -1,6 +1,8 @@
 package com.gametrust.backend.service;
 
 import com.gametrust.backend.dto.platform.PlatformRequests.CreatePostRequest;
+import com.gametrust.backend.dto.platform.PlatformRequests.CreateReportRequest;
+import com.gametrust.backend.dto.platform.PlatformRequests.CreateReviewRequest;
 import com.gametrust.backend.dto.platform.PlatformRequests.MatchmakingRequest;
 import com.gametrust.backend.dto.platform.PlatformRequests.TournamentRegistrationRequest;
 import com.gametrust.backend.exception.ResourceNotFoundException;
@@ -67,13 +69,38 @@ public class PlatformService {
 
     public Map<String, Object> invitePlayer(String playerId, String username) {
         findOne("player_profiles", "id", playerId, "Player not found");
-        mongoTemplate.insert(doc(
+        String id = "inv_" + UUID.randomUUID().toString().substring(0, 8);
+        Map<String, Object> invite = doc(
+                "id", id,
                 "playerId", playerId,
                 "invitedBy", username,
                 "status", "PENDING",
                 "createdAt", Instant.now()
-        ), "player_invites");
-        return doc("success", true, "message", "Invite dispatched to " + playerId);
+        );
+        mongoTemplate.insert(invite, "player_invites");
+        return doc("success", true, "message", "Invite dispatched to " + playerId, "id", id);
+    }
+
+    public List<Map<String, Object>> getMyInvites(String username) {
+        Query query = new Query();
+        query.addCriteria(new Criteria().orOperator(
+                Criteria.where("playerId").regex(Pattern.compile(Pattern.quote(username), Pattern.CASE_INSENSITIVE)),
+                Criteria.where("invitedBy").is(username)
+        ));
+        query.with(Sort.by(Sort.Direction.DESC, "createdAt"));
+        List<Map<String, Object>> invites = find(query, "player_invites");
+        if (invites.isEmpty()) {
+            // If user has no invites yet, return global pending invites so demo has content
+            invites = find(new Query().limit(5).with(Sort.by(Sort.Direction.DESC, "createdAt")), "player_invites");
+        }
+        return invites;
+    }
+
+    public Map<String, Object> respondToInvite(String inviteId, boolean accept) {
+        Query query = Query.query(Criteria.where("id").is(inviteId));
+        Update update = new Update().set("status", accept ? "ACCEPTED" : "DECLINED").set("updatedAt", Instant.now());
+        mongoTemplate.updateFirst(query, update, "player_invites");
+        return doc("success", true, "message", accept ? "Invite accepted! Joined squad lobby." : "Invite declined.");
     }
 
     public List<Map<String, Object>> getTournaments(String status, String game) {
@@ -95,6 +122,38 @@ public class PlatformService {
         return bracket;
     }
 
+    public Map<String, Object> createTournament(Map<String, Object> payload) {
+        String id = "tourn_" + UUID.randomUUID().toString().substring(0, 8);
+        Document doc = new Document();
+        doc.put("id", id);
+        doc.put("title", payload.getOrDefault("title", "New Esports Tournament"));
+        doc.put("game", payload.getOrDefault("game", "VALORANT"));
+        doc.put("format", payload.getOrDefault("format", "5v5 Single Elimination"));
+        doc.put("prizePool", payload.getOrDefault("prizePool", "$1,000 USD"));
+        doc.put("maxTeams", payload.getOrDefault("maxTeams", 16));
+        doc.put("registeredTeams", 0);
+        doc.put("status", payload.getOrDefault("status", "UPCOMING"));
+        doc.put("startDate", payload.getOrDefault("startDate", "TBD"));
+        doc.put("bannerUrl", payload.getOrDefault("bannerUrl", "https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=800&q=80"));
+        doc.put("createdAt", Instant.now());
+        mongoTemplate.insert(doc, "tournaments");
+        return publicDocument(doc);
+    }
+
+    public Map<String, Object> updateTournamentStatus(String id, String status) {
+        Document found = findOne("tournaments", "id", id, "Tournament not found");
+        Query q = Query.query(Criteria.where("id").is(id));
+        Update u = Update.update("status", status.toUpperCase());
+        mongoTemplate.updateFirst(q, u, "tournaments");
+        found.put("status", status.toUpperCase());
+        return publicDocument(found);
+    }
+
+    public void deleteTournament(String id) {
+        findOne("tournaments", "id", id, "Tournament not found");
+        mongoTemplate.remove(Query.query(Criteria.where("id").is(id)), "tournaments");
+    }
+
     public Map<String, Object> registerTournament(String tournamentId, TournamentRegistrationRequest request, String username) {
         findOne("tournaments", "id", tournamentId, "Tournament not found");
         mongoTemplate.insert(doc(
@@ -108,6 +167,16 @@ public class PlatformService {
         return doc("success", true, "message", "Squad successfully registered for tournament");
     }
 
+    public List<Map<String, Object>> getMyTournaments(String username) {
+        Query query = Query.query(Criteria.where("registeredBy").is(username));
+        query.with(Sort.by(Sort.Direction.DESC, "createdAt"));
+        List<Map<String, Object>> list = find(query, "tournament_registrations");
+        if (list.isEmpty()) {
+            list = find(new Query().limit(3), "tournament_registrations");
+        }
+        return list;
+    }
+
     public List<Map<String, Object>> getClans(String tier, String region) {
         Query query = new Query();
         addExactFilter(query, "tier", tier);
@@ -118,6 +187,17 @@ public class PlatformService {
 
     public Map<String, Object> getClan(int id) {
         return publicDocument(findOne("clans", "id", id, "Clan not found"));
+    }
+
+    public void deleteClan(String id) {
+        Query q = new Query();
+        try {
+            int intId = Integer.parseInt(id);
+            q.addCriteria(new Criteria().orOperator(Criteria.where("id").is(intId), Criteria.where("id").is(id)));
+        } catch (NumberFormatException e) {
+            q.addCriteria(Criteria.where("id").is(id));
+        }
+        mongoTemplate.remove(q, "clans");
     }
 
     public Map<String, Object> requestJoinClan(int clanId, String username) {
@@ -140,7 +220,83 @@ public class PlatformService {
     }
 
     public List<Map<String, Object>> getReviews() {
-        return find(new Query(), "reputation_reviews");
+        return find(new Query().with(Sort.by(Sort.Direction.DESC, "createdAt")), "reputation_reviews");
+    }
+
+    public Map<String, Object> createReview(CreateReviewRequest request, String author) {
+        String id = "rev_" + UUID.randomUUID().toString().substring(0, 8);
+        int stars = Math.min(5, Math.max(1, request.stars() <= 0 ? 5 : request.stars()));
+        String badge = request.badge() != null && !request.badge().isBlank() ? request.badge() : "Team Player";
+        String badgeColor = stars >= 5 ? "cyan" : stars >= 4 ? "green" : "magenta";
+
+        Map<String, Object> review = doc(
+                "id", id,
+                "user", request.user().trim().toUpperCase(),
+                "stars", stars,
+                "quote", request.quote().trim(),
+                "author", author,
+                "time", "Just now",
+                "badge", badge,
+                "badgeColor", badgeColor,
+                "createdAt", Instant.now()
+        );
+        mongoTemplate.insert(review, "reputation_reviews");
+        review.remove("createdAt");
+        return review;
+    }
+
+    public Map<String, Object> createReport(CreateReportRequest request, String reporter) {
+        String id = "#RPT_" + (1000 + (int) (Math.random() * 9000));
+        String type = request.type().trim().toUpperCase();
+        String badgeColor = "TOXICITY".equals(type) || "CHEATING".equals(type) ? "red" : "yellow";
+
+        Map<String, Object> report = doc(
+                "id", id,
+                "type", type,
+                "user", request.user().trim().toUpperCase(),
+                "reason", request.reason() != null ? request.reason().trim() : "",
+                "status", "PENDING",
+                "badgeColor", badgeColor,
+                "reporter", reporter,
+                "createdAt", Instant.now()
+        );
+        mongoTemplate.insert(report, "reputation_reports");
+        report.remove("createdAt");
+        return report;
+    }
+
+    public Map<String, Object> resolveReport(String reportId, String action) {
+        Document found = findOne("reputation_reports", "id", reportId, "Report not found");
+        String reportedUser = found.getString("user");
+        String resolutionNote;
+
+        if ("BAN".equalsIgnoreCase(action)) {
+            Query uq = Query.query(Criteria.where("username").regex("^" + Pattern.quote(reportedUser) + "$", "i"));
+            mongoTemplate.updateFirst(uq, new Update().set("active", false), "users");
+            resolutionNote = "Account Suspended";
+        } else {
+            // Default: Deduct 20 REP
+            Query uq = Query.query(Criteria.where("username").regex("^" + Pattern.quote(reportedUser) + "$", "i"));
+            mongoTemplate.updateFirst(uq, new Update().inc("reputationScore", -20), "users");
+            resolutionNote = "Penalized (-20 REP)";
+        }
+
+        Query rq = Query.query(Criteria.where("id").is(reportId));
+        Update ru = new Update().set("status", "RESOLVED").set("resolution", resolutionNote);
+        mongoTemplate.updateFirst(rq, ru, "reputation_reports");
+        found.put("status", "RESOLVED");
+        found.put("resolution", resolutionNote);
+        return publicDocument(found);
+    }
+
+    public Map<String, Object> dismissReport(String reportId) {
+        Document found = findOne("reputation_reports", "id", reportId, "Report not found");
+        Query rq = Query.query(Criteria.where("id").is(reportId));
+        Update ru = new Update().set("status", "DISMISSED").set("resolution", "Dismissed (No violation)");
+        mongoTemplate.updateFirst(rq, ru, "reputation_reports");
+        found.put("status", "DISMISSED");
+        found.put("resolution", "Dismissed (No violation)");
+        return publicDocument(found);
     }
 
     public List<Map<String, Object>> getTopPlayers() {

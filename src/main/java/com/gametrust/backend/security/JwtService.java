@@ -6,6 +6,7 @@ import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.io.Decoders;
 import io.jsonwebtoken.security.Keys;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.ResponseCookie;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Service;
 
@@ -20,20 +21,26 @@ import java.util.function.Function;
 @Service
 public class JwtService {
 
+    public static final String ACCESS_TOKEN_COOKIE_NAME = "gametrust_access_token";
+    public static final String REFRESH_TOKEN_COOKIE_NAME = "gametrust_refresh_token";
+
     private final String secret;
     private final String issuer;
     private final long expiration;
     private final long refreshExpiration;
+    private final boolean cookieSecure;
 
     public JwtService(
             @Value("${jwt.secret}") String secret,
             @Value("${jwt.issuer:gametrust.gg}") String issuer,
             @Value("${jwt.expiration:900000}") long expiration,
-            @Value("${jwt.refresh-expiration:604800000}") long refreshExpiration) {
+            @Value("${jwt.refresh-expiration:604800000}") long refreshExpiration,
+            @Value("${jwt.cookie.secure:false}") boolean cookieSecure) {
         this.secret = secret;
         this.issuer = issuer;
         this.expiration = expiration;
         this.refreshExpiration = refreshExpiration;
+        this.cookieSecure = cookieSecure;
     }
 
     private SecretKey getSigningKey() {
@@ -109,5 +116,49 @@ public class JwtService {
 
     public long getRefreshExpiration() {
         return refreshExpiration;
+    }
+
+    public boolean isCookieSecure() {
+        return cookieSecure;
+    }
+
+    public ResponseCookie generateAccessTokenCookie(String token) {
+        return ResponseCookie.from(ACCESS_TOKEN_COOKIE_NAME, token)
+                .path("/")
+                .maxAge(expiration / 1000)
+                .httpOnly(true)
+                .secure(cookieSecure)
+                .sameSite("Lax")
+                .build();
+    }
+
+    public ResponseCookie generateRefreshTokenCookie(String token) {
+        return ResponseCookie.from(REFRESH_TOKEN_COOKIE_NAME, token)
+                .path("/")
+                .maxAge(refreshExpiration / 1000)
+                .httpOnly(true)
+                .secure(cookieSecure)
+                .sameSite("Lax")
+                .build();
+    }
+
+    public ResponseCookie cleanAccessTokenCookie() {
+        return ResponseCookie.from(ACCESS_TOKEN_COOKIE_NAME, "")
+                .path("/")
+                .maxAge(0)
+                .httpOnly(true)
+                .secure(cookieSecure)
+                .sameSite("Lax")
+                .build();
+    }
+
+    public ResponseCookie cleanRefreshTokenCookie() {
+        return ResponseCookie.from(REFRESH_TOKEN_COOKIE_NAME, "")
+                .path("/")
+                .maxAge(0)
+                .httpOnly(true)
+                .secure(cookieSecure)
+                .sameSite("Lax")
+                .build();
     }
 }
