@@ -1,0 +1,9 @@
+livekit:
+  server-url: ${LIVEKIT_SERVER_URL:ws://localhost:7880}
+  api-key: ${LIVEKIT_API_KEY:devkey}
+  api-secret: ${LIVEKIT_API_SECRET:secret}
+
+payos:
+  client-id: ${PAYOS_CLIENT_ID:your_payos_client_id}
+  api-key: ${PAYOS_API_KEY:your_payos_api_key}
+  checksum-key: ${PAYOS_CHECKSUM_KEY:your_payos_checksum_key}

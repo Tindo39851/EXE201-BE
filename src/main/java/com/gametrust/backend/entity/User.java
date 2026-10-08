@@ -28,6 +28,9 @@ public class User {
     @Field("reputationScore")
     private int reputationScore = 100;
 
+    @Field("walletBalance")
+    private double walletBalance = 150000.0; // 150,000 VNĐ
+
     @Field("avatarUrl")
     private String avatarUrl;
 
@@ -109,6 +112,14 @@ public class User {
 
     public void setReputationScore(int reputationScore) {
         this.reputationScore = reputationScore;
+    }
+
+    public double getWalletBalance() {
+        return walletBalance;
+    }
+
+    public void setWalletBalance(double walletBalance) {
+        this.walletBalance = walletBalance;
     }
 
     public String getAvatarUrl() {
