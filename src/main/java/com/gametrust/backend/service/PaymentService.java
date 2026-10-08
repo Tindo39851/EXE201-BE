@@ -70,8 +70,8 @@ public class PaymentService {
     public PaymentResponse createPaymentLink(CreatePaymentRequest request, String userId, String username) {
         boolean isProd = environment.acceptsProfiles(Profiles.of("prod", "production"));
 
-        // 1. Authentication Security: Block anonymous orders in production
-        if (isProd && (userId == null || userId.isBlank() || "guest".equalsIgnoreCase(userId))) {
+        // 1. Authentication Security: Block unauthenticated / guest orders on all environments
+        if (userId == null || userId.isBlank() || "guest".equalsIgnoreCase(userId)) {
             throw new UnauthorizedException("Vui lòng đăng nhập tài khoản trước khi thực hiện giao dịch nạp tiền.");
         }
 
@@ -92,7 +92,7 @@ public class PaymentService {
         double amountUsd = Math.round((amountVnd / (double) USD_TO_VND_RATE) * 100.0) / 100.0;
 
         // 3. Rate Limiting: Prevent spamming pending orders (only enforce on production)
-        String effectiveUserId = (userId != null && !userId.isBlank()) ? userId : "guest";
+        String effectiveUserId = userId;
         if (isProd) {
             Instant fifteenMinutesAgo = Instant.now().minus(15, ChronoUnit.MINUTES);
             long pendingCount = transactionRepository.countByUserIdAndStatusAndCreatedAtAfter(effectiveUserId, "PENDING", fifteenMinutesAgo);
@@ -170,17 +170,7 @@ public class PaymentService {
 
         } catch (Exception ex) {
             log.error("[PAYMENT_ERROR] Failed to communicate with PayOS gateway: {}", ex.getMessage(), ex);
-            // Fallback for local sandbox/offline development
-            response.setQrImageUrl("https://img.vietqr.io/image/970422-0838939851-compact2.png?amount=" + amountVnd + "&addInfo=" + description + "&accountName=DO%20TRONG%20TIN");
-            WalletTransaction fallbackTx = new WalletTransaction(
-                    orderCode,
-                    effectiveUserId,
-                    username != null ? username : "Operative",
-                    amountUsd,
-                    (int) amountVnd,
-                    description
-            );
-            transactionRepository.save(fallbackTx);
+            throw new BadRequestException("Không thể tạo liên kết thanh toán qua cổng PayOS. Vui lòng thử lại sau: " + ex.getMessage());
         }
 
         return response;
@@ -241,25 +231,43 @@ public class PaymentService {
             );
 
             if (updatedTx == null) {
-                log.info("[PAYMENT_IDEMPOTENT] OrderCode {} was already processed or not pending. Ignoring duplicate webhook call.", orderCode);
+                // Idempotent retry: if transaction was marked SUCCESS but credit was interrupted, complete it now
+                optionalTx.ifPresent(this::ensureUserBalanceCredited);
+                log.info("[PAYMENT_IDEMPOTENT] OrderCode {} was already processed. Verified credit status.", orderCode);
                 return true;
             }
 
-            // 6. ATOMIC BALANCE INCREMENT (Credit in VND)
-            if (updatedTx.getUserId() != null && !"guest".equals(updatedTx.getUserId())) {
-                Query userQuery = new Query(Criteria.where("id").is(updatedTx.getUserId()));
-                Update balanceUpdate = new Update().inc("walletBalance", (double) updatedTx.getAmountVnd());
-                mongoTemplate.updateFirst(userQuery, balanceUpdate, User.class);
-
-                log.info("[PAYMENT_SUCCESS] Successfully credited {} VND to user ID {} for orderCode {}. Bank Ref: {}",
-                        updatedTx.getAmountVnd(), updatedTx.getUserId(), orderCode, webhookData.getReference());
-            }
-
+            // 6. RELIABLE BALANCE INCREMENT WITH RECOVERY STATE
+            ensureUserBalanceCredited(updatedTx);
             return true;
 
         } catch (Exception ex) {
             log.error("[PAYMENT_SECURITY_ERROR] Error validating or processing PayOS webhook: {}", ex.getMessage(), ex);
             return false;
+        }
+    }
+
+    public synchronized void ensureUserBalanceCredited(WalletTransaction tx) {
+        if (tx == null || tx.isCredited() || tx.getUserId() == null || "guest".equalsIgnoreCase(tx.getUserId())) {
+            return;
+        }
+
+        try {
+            Query userQuery = new Query(Criteria.where("id").is(tx.getUserId()));
+            Update balanceUpdate = new Update().inc("walletBalance", (double) tx.getAmountVnd());
+            mongoTemplate.updateFirst(userQuery, balanceUpdate, User.class);
+
+            Query txQuery = new Query(Criteria.where("orderCode").is(tx.getOrderCode()));
+            Update creditUpdate = new Update().set("credited", true);
+            mongoTemplate.updateFirst(txQuery, creditUpdate, WalletTransaction.class);
+
+            tx.setCredited(true);
+            log.info("[PAYMENT_CREDIT_COMPLETED] Reliably credited {} VND to user {} for orderCode {}",
+                    tx.getAmountVnd(), tx.getUserId(), tx.getOrderCode());
+        } catch (Exception ex) {
+            log.error("[PAYMENT_CREDIT_ERROR] Failed to credit balance for user {} orderCode {}: {}",
+                    tx.getUserId(), tx.getOrderCode(), ex.getMessage(), ex);
+            throw ex;
         }
     }
 
@@ -281,24 +289,32 @@ public class PaymentService {
                 WalletTransaction.class
         );
 
-        if (updatedTx != null && updatedTx.getUserId() != null && !"guest".equals(updatedTx.getUserId())) {
-            Query userQuery = new Query(Criteria.where("id").is(updatedTx.getUserId()));
-            Update balanceUpdate = new Update().inc("walletBalance", (double) updatedTx.getAmountVnd());
-            mongoTemplate.updateFirst(userQuery, balanceUpdate, User.class);
+        if (updatedTx != null) {
+            ensureUserBalanceCredited(updatedTx);
             return true;
         }
-        return updatedTx != null;
+        return false;
     }
 
     public PaymentStatusResponse checkPaymentStatus(long orderCode) {
+        return checkPaymentStatus(orderCode, null, true);
+    }
+
+    public PaymentStatusResponse checkPaymentStatus(long orderCode, String callerUserId, boolean isAdmin) {
         Optional<WalletTransaction> optionalTx = transactionRepository.findByOrderCode(orderCode);
         if (optionalTx.isEmpty()) {
             throw new ResourceNotFoundException("Giao dịch không tồn tại với mã đơn " + orderCode);
         }
         WalletTransaction tx = optionalTx.get();
 
-        // 1. If already marked SUCCESS, return immediately with current user balance
+        // Ownership enforcement: Only owner or admin can inspect this transaction
+        if (!isAdmin && callerUserId != null && !callerUserId.equals(tx.getUserId())) {
+            throw new UnauthorizedException("Bạn không có quyền truy cập thông tin giao dịch này.");
+        }
+
+        // 1. If already marked SUCCESS, ensure balance was credited, then return immediately
         if ("SUCCESS".equalsIgnoreCase(tx.getStatus())) {
+            ensureUserBalanceCredited(tx);
             double currentBalance = getBalance(tx.getUserId());
             return new PaymentStatusResponse(orderCode, "SUCCESS", tx.getAmountVnd(), true, currentBalance, "Giao dịch đã được thanh toán thành công!");
         }
@@ -329,7 +345,7 @@ public class PaymentService {
                     counterBank = t.getCounterAccountBankName();
                 }
 
-                // Atomic idempotent update
+                // Atomic update
                 Query query = new Query(Criteria.where("orderCode").is(orderCode).and("status").is("PENDING"));
                 Update update = new Update()
                         .set("status", "SUCCESS")
@@ -346,10 +362,8 @@ public class PaymentService {
                         WalletTransaction.class
                 );
 
-                if (updatedTx != null && updatedTx.getUserId() != null && !"guest".equalsIgnoreCase(updatedTx.getUserId())) {
-                    Query userQuery = new Query(Criteria.where("id").is(updatedTx.getUserId()));
-                    Update balanceUpdate = new Update().inc("walletBalance", (double) updatedTx.getAmountVnd());
-                    mongoTemplate.updateFirst(userQuery, balanceUpdate, User.class);
+                if (updatedTx != null) {
+                    ensureUserBalanceCredited(updatedTx);
                     log.info("[PAYMENT_SYNC_SUCCESS] Synchronized paid order {} for user {}: +{} VND",
                             orderCode, updatedTx.getUserId(), updatedTx.getAmountVnd());
                 }
@@ -374,6 +388,9 @@ public class PaymentService {
      * Fallback: if PayOS can't confirm yet but order exists, mark for review and credit optimistically in DEV.
      */
     public PaymentStatusResponse checkByTransferRef(String ref, String userId) {
+        if (userId == null || userId.isBlank() || "guest".equalsIgnoreCase(userId)) {
+            throw new UnauthorizedException("Vui lòng đăng nhập tài khoản trước khi kiểm tra mã chuyển khoản.");
+        }
         if (ref == null || ref.isBlank()) {
             throw new BadRequestException("Vui lòng nhập mã giao dịch (ví dụ: GT891725).");
         }
@@ -417,8 +434,14 @@ public class PaymentService {
 
         WalletTransaction tx = optionalTx.get();
 
-        // 3. Already SUCCESS → just return current status
+        // Ownership enforcement: Cannot query transactions of other users
+        if (!userId.equals(tx.getUserId())) {
+            throw new UnauthorizedException("Bạn không có quyền tra cứu giao dịch của tài khoản khác.");
+        }
+
+        // 3. Already SUCCESS → ensure credited and return current status
         if ("SUCCESS".equalsIgnoreCase(tx.getStatus())) {
+            ensureUserBalanceCredited(tx);
             double currentBalance = getBalance(tx.getUserId());
             return new PaymentStatusResponse(tx.getOrderCode(), "SUCCESS", tx.getAmountVnd(), true,
                     currentBalance, "Giao dịch này đã được xử lý thành công trước đó.");
@@ -460,10 +483,8 @@ public class PaymentService {
                 WalletTransaction updatedTx = mongoTemplate.findAndModify(query, update,
                         FindAndModifyOptions.options().returnNew(true), WalletTransaction.class);
 
-                if (updatedTx != null && updatedTx.getUserId() != null && !"guest".equalsIgnoreCase(updatedTx.getUserId())) {
-                    Query userQuery = new Query(Criteria.where("id").is(updatedTx.getUserId()));
-                    Update balanceUpdate = new Update().inc("walletBalance", (double) updatedTx.getAmountVnd());
-                    mongoTemplate.updateFirst(userQuery, balanceUpdate, User.class);
+                if (updatedTx != null) {
+                    ensureUserBalanceCredited(updatedTx);
                     log.info("[MANUAL_RECONCILE_SUCCESS] Credited {} VND to user {} via manual ref '{}'",
                             updatedTx.getAmountVnd(), updatedTx.getUserId(), normalizedRef);
                 }
@@ -491,10 +512,8 @@ public class PaymentService {
             WalletTransaction updatedTx = mongoTemplate.findAndModify(query, update,
                     FindAndModifyOptions.options().returnNew(true), WalletTransaction.class);
 
-            if (updatedTx != null && updatedTx.getUserId() != null && !"guest".equalsIgnoreCase(updatedTx.getUserId())) {
-                Query userQuery = new Query(Criteria.where("id").is(updatedTx.getUserId()));
-                Update balanceUpdate = new Update().inc("walletBalance", (double) updatedTx.getAmountVnd());
-                mongoTemplate.updateFirst(userQuery, balanceUpdate, User.class);
+            if (updatedTx != null) {
+                ensureUserBalanceCredited(updatedTx);
             }
 
             double newBalance = getBalance(tx.getUserId());

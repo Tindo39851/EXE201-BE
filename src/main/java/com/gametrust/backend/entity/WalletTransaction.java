@@ -36,6 +36,8 @@ public class WalletTransaction {
 
     private String checkoutUrl;
 
+    private boolean credited = false;
+
     // Banking audit fields
     private String reference;
     private String counterAccountNumber;
@@ -156,6 +158,14 @@ public class WalletTransaction {
 
     public void setCheckoutUrl(String checkoutUrl) {
         this.checkoutUrl = checkoutUrl;
+    }
+
+    public boolean isCredited() {
+        return credited;
+    }
+
+    public void setCredited(boolean credited) {
+        this.credited = credited;
     }
 
     public String getReference() {
