@@ -7,8 +7,13 @@ import com.gametrust.backend.exception.BadRequestException;
 import com.gametrust.backend.exception.ResourceNotFoundException;
 import com.gametrust.backend.repository.UserRepository;
 import com.gametrust.backend.service.PlatformService;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.query.Criteria;
+import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 
@@ -17,10 +22,12 @@ import java.util.Map;
 public class AdminController {
     private final UserRepository userRepository;
     private final PlatformService platformService;
+    private final MongoTemplate mongoTemplate;
 
-    public AdminController(UserRepository userRepository, PlatformService platformService) {
+    public AdminController(UserRepository userRepository, PlatformService platformService, MongoTemplate mongoTemplate) {
         this.userRepository = userRepository;
         this.platformService = platformService;
+        this.mongoTemplate = mongoTemplate;
     }
 
     @GetMapping("/users")
@@ -32,9 +39,13 @@ public class AdminController {
     public ApiResponse<UserResponse> toggleStatus(@PathVariable String id) {
         User user = userRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
-        user.setActive(!user.isActive());
-        user.touch();
-        userRepository.save(user);
+        boolean newStatus = !user.isActive();
+        mongoTemplate.updateFirst(
+                Query.query(Criteria.where("id").is(id)),
+                new Update().set("isActive", newStatus).set("updatedAt", Instant.now()),
+                User.class
+        );
+        user.setActive(newStatus);
         return ApiResponse.success("User status updated successfully", UserResponse.fromUser(user));
     }
 
@@ -102,10 +113,13 @@ public class AdminController {
         User user = userRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
         if (body.containsKey("score")) {
-            int score = ((Number) body.get("score")).intValue();
-            user.setReputationScore(Math.max(0, Math.min(100, score)));
-            user.touch();
-            userRepository.save(user);
+            int score = Math.max(0, Math.min(100, ((Number) body.get("score")).intValue()));
+            mongoTemplate.updateFirst(
+                    Query.query(Criteria.where("id").is(id)),
+                    new Update().set("reputationScore", score).set("updatedAt", Instant.now()),
+                    User.class
+            );
+            user.setReputationScore(score);
         }
         return ApiResponse.success("Reputation updated successfully", UserResponse.fromUser(user));
     }
@@ -124,9 +138,13 @@ public class AdminController {
             roleStr = "MODERATOR";
         }
         try {
-            user.setRole(com.gametrust.backend.entity.Role.valueOf(roleStr));
-            user.touch();
-            userRepository.save(user);
+            com.gametrust.backend.entity.Role role = com.gametrust.backend.entity.Role.valueOf(roleStr);
+            mongoTemplate.updateFirst(
+                    Query.query(Criteria.where("id").is(id)),
+                    new Update().set("role", role).set("updatedAt", Instant.now()),
+                    User.class
+            );
+            user.setRole(role);
         } catch (IllegalArgumentException e) {
             throw new BadRequestException("Invalid role '" + roleStr + "'. Permitted values: MEMBER, MODERATOR, ADMIN");
         }

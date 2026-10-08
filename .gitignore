@@ -31,3 +31,12 @@ data/
 .env
 .env.local
 *.env
+application-local.yml
+application-local.yaml
+*.local.yml
+*.local.yaml
+
+### LiveKit Local ###
+*.exe
+livekit.local.yaml
+

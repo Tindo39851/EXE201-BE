@@ -15,11 +15,12 @@ public class UserResponse {
     private String avatarUrl;
     private boolean active = true;
     private Instant createdAt;
+    private Double walletBalance;
 
     public UserResponse() {
     }
 
-    public UserResponse(String id, String username, String email, Role role, int reputationScore, String avatarUrl, boolean active, Instant createdAt) {
+    public UserResponse(String id, String username, String email, Role role, int reputationScore, String avatarUrl, boolean active, Instant createdAt, Double walletBalance) {
         this.id = id;
         this.username = username;
         this.email = email;
@@ -28,6 +29,7 @@ public class UserResponse {
         this.avatarUrl = avatarUrl;
         this.active = active;
         this.createdAt = createdAt;
+        this.walletBalance = walletBalance;
     }
 
     public static UserResponse fromUser(User user) {
@@ -42,7 +44,8 @@ public class UserResponse {
                 user.getReputationScore(),
                 user.getAvatarUrl(),
                 user.isActive(),
-                user.getCreatedAt()
+                user.getCreatedAt(),
+                user.getWalletBalance()
         );
     }
 
@@ -108,5 +111,13 @@ public class UserResponse {
 
     public void setActive(boolean active) {
         this.active = active;
+    }
+
+    public Double getWalletBalance() {
+        return walletBalance;
+    }
+
+    public void setWalletBalance(Double walletBalance) {
+        this.walletBalance = walletBalance;
     }
 }
