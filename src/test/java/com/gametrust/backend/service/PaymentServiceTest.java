@@ -81,6 +81,8 @@ class PaymentServiceTest {
         CreatePaymentRequest request = new CreatePaymentRequest();
         request.setAmountVnd(50000L);
 
+        // Stub environment to simulate production profile so the rate-limit guard is active
+        when(environment.acceptsProfiles(any(org.springframework.core.env.Profiles.class))).thenReturn(true);
         when(transactionRepository.countByUserIdAndStatusAndCreatedAtAfter(anyString(), eq("PENDING"), any(Instant.class)))
                 .thenReturn(5L);
 

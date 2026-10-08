@@ -101,18 +101,19 @@ public class PaymentService {
             }
         }
 
-        // Ensure unique orderCode (timestamp + random digits, guaranteed non-duplicate)
+        // Ensure unique orderCode AND unique description (GT + orderCode suffix must not collide)
         long orderCode;
+        String description;
         int attempts = 0;
         do {
             orderCode = (System.currentTimeMillis() % 800000000L) + (long) (java.util.concurrent.ThreadLocalRandom.current().nextInt(10000, 99999));
+            description = "GT" + orderCode;
+            if (description.length() > 25) description = description.substring(0, 25);
             attempts++;
-        } while (transactionRepository.findByOrderCode(orderCode).isPresent() && attempts < 10);
-
-        String description = "GT" + (orderCode % 1000000L);
-        if (description.length() > 25) {
-            description = description.substring(0, 25);
-        }
+        } while (attempts < 10 && (
+                transactionRepository.findByOrderCode(orderCode).isPresent() ||
+                transactionRepository.findByDescription(description).isPresent()
+        ));
 
         // 4. Safe Return/Cancel URLs
         String frontendBaseUrl = environment.getProperty("app.frontend.url", "http://localhost:3000");
@@ -366,10 +367,18 @@ public class PaymentService {
                     ensureUserBalanceCredited(updatedTx);
                     log.info("[PAYMENT_SYNC_SUCCESS] Synchronized paid order {} for user {}: +{} VND",
                             orderCode, updatedTx.getUserId(), updatedTx.getAmountVnd());
+                    double newBalance = getBalance(updatedTx.getUserId());
+                    return new PaymentStatusResponse(orderCode, "SUCCESS", tx.getAmountVnd(), true, newBalance, "Thanh toán thành công!");
+                } else {
+                    // Concurrent request already processed → re-fetch actual status and ensure credited
+                    WalletTransaction latest = transactionRepository.findByOrderCode(orderCode)
+                            .orElse(tx);
+                    ensureUserBalanceCredited(latest);
+                    boolean isPaid = "SUCCESS".equalsIgnoreCase(latest.getStatus());
+                    double newBalance = getBalance(tx.getUserId());
+                    return new PaymentStatusResponse(orderCode, latest.getStatus(), tx.getAmountVnd(), isPaid, newBalance,
+                            isPaid ? "Thanh toán thành công!" : "Giao dịch đang được xử lý.");
                 }
-
-                double newBalance = getBalance(tx.getUserId());
-                return new PaymentStatusResponse(orderCode, "SUCCESS", tx.getAmountVnd(), true, newBalance, "Thanh toán thành công!");
             } else if (paymentLink != null && paymentLink.getStatus() == PaymentLinkStatus.CANCELLED) {
                 tx.setStatus("CANCELLED");
                 transactionRepository.save(tx);

@@ -38,10 +38,17 @@ public class PaymentController {
     @PostMapping("/webhook")
     public ResponseEntity<Map<String, Object>> webhook(@RequestBody JsonNode payload) {
         boolean success = paymentService.handleWebhook(payload);
+        if (!success) {
+            return ResponseEntity.internalServerError().body(Map.of(
+                    "error", 1,
+                    "message", "Webhook processing failed — will retry",
+                    "data", Map.of("success", false)
+            ));
+        }
         return ResponseEntity.ok(Map.of(
                 "error", 0,
-                "message", success ? "Webhook processed" : "Webhook ignored or invalid",
-                "data", Map.of("success", success)
+                "message", "Webhook processed",
+                "data", Map.of("success", true)
         ));
     }
 

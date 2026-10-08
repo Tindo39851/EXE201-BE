@@ -35,6 +35,7 @@ public class AuthServiceImpl implements AuthService {
     private final EmailService emailService;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
+    private final org.springframework.data.mongodb.core.MongoTemplate mongoTemplate;
 
     public AuthServiceImpl(
             UserRepository userRepository,
@@ -42,13 +43,15 @@ public class AuthServiceImpl implements AuthService {
             EmailVerificationRepository emailVerificationRepository,
             EmailService emailService,
             PasswordEncoder passwordEncoder,
-            JwtService jwtService) {
+            JwtService jwtService,
+            org.springframework.data.mongodb.core.MongoTemplate mongoTemplate) {
         this.userRepository = userRepository;
         this.refreshTokenRepository = refreshTokenRepository;
         this.emailVerificationRepository = emailVerificationRepository;
         this.emailService = emailService;
         this.passwordEncoder = passwordEncoder;
         this.jwtService = jwtService;
+        this.mongoTemplate = mongoTemplate;
     }
 
     @Override
@@ -146,10 +149,18 @@ public class AuthServiceImpl implements AuthService {
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
 
         if (avatarUrl != null && !avatarUrl.isBlank()) {
-            user.setAvatarUrl(avatarUrl.trim());
+            String cleanAvatar = avatarUrl.trim();
+            mongoTemplate.updateFirst(
+                    org.springframework.data.mongodb.core.query.Query.query(
+                            org.springframework.data.mongodb.core.query.Criteria.where("id").is(user.getId())),
+                    new org.springframework.data.mongodb.core.query.Update()
+                            .set("avatarUrl", cleanAvatar)
+                            .set("updatedAt", Instant.now()),
+                    User.class
+            );
+            user.setAvatarUrl(cleanAvatar);
+            user.touch();
         }
-        user.touch();
-        userRepository.save(user);
         return UserResponse.fromUser(user);
     }
 
