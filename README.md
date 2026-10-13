@@ -209,6 +209,25 @@ Create room body:
 
 Room state and chat history are persisted by the REST API. Voice media travels directly between the browser and LiveKit SFU over WebRTC; Spring Boot only validates room access and signs short-lived participant tokens. See `VOICE_CHAT_SETUP.md` for local and production setup.
 
+### AI Coach chat
+
+The first AI milestone is an authenticated text chat backed by the OpenAI Responses API. The browser never receives the OpenAI API key; it calls Spring Boot, and Spring Boot calls OpenAI.
+
+| Method | Endpoint | Access | Behavior |
+|---|---|---|---|
+| GET | `/api/ai/status` | Authenticated | Return whether AI is configured and the selected model |
+| POST | `/api/ai/chat` | Authenticated | Send up to 20 user/assistant messages and return the AI reply |
+
+Backend environment variables:
+
+```env
+OPENAI_API_KEY=replace_with_a_new_rotated_key
+OPENAI_MODEL=gpt-4.1-mini
+OPENAI_MAX_OUTPUT_TOKENS=600
+```
+
+Never commit a real key and never expose it through a `NEXT_PUBLIC_*` variable. Player JSON analysis, toxicity scoring and moderation recommendations are deliberately kept out of this first chat milestone; they should use a separate structured-output endpoint with evaluation data and human review.
+
 ## MongoDB collections
 
 The `gametrust` database contains:

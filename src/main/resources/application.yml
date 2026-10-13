@@ -50,6 +50,12 @@ payos:
   api-key: ${PAYOS_API_KEY:}
   checksum-key: ${PAYOS_CHECKSUM_KEY:}
 
+openai:
+  api-key: ${OPENAI_API_KEY:}
+  model: ${OPENAI_MODEL:gpt-4.1-mini}
+  base-url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
+  max-output-tokens: ${OPENAI_MAX_OUTPUT_TOKENS:600}
+
 springdoc:
   swagger-ui:
     path: /swagger-ui.html
