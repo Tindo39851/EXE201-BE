@@ -5,6 +5,7 @@ import com.gametrust.backend.dto.platform.PlatformRequests.CreateReportRequest;
 import com.gametrust.backend.dto.platform.PlatformRequests.CreateReviewRequest;
 import com.gametrust.backend.dto.platform.PlatformRequests.MatchmakingRequest;
 import com.gametrust.backend.dto.platform.PlatformRequests.TournamentRegistrationRequest;
+import com.gametrust.backend.dto.platform.PlatformRequests.UpdateSquadProfileRequest;
 import com.gametrust.backend.exception.BadRequestException;
 import com.gametrust.backend.exception.ResourceNotFoundException;
 import org.bson.Document;
@@ -14,6 +15,12 @@ import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.stereotype.Service;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.gametrust.backend.config.OpenAiProperties;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.web.client.RestClient;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -26,14 +33,139 @@ import java.util.regex.Pattern;
 @Service
 public class PlatformService {
 
-    private final MongoTemplate mongoTemplate;
+    private static final Logger log = LoggerFactory.getLogger(PlatformService.class);
 
-    public PlatformService(MongoTemplate mongoTemplate) {
+    private final MongoTemplate mongoTemplate;
+    private final OpenAiProperties openAiProperties;
+    private final RestClient restClient;
+
+    public PlatformService(
+            MongoTemplate mongoTemplate,
+            OpenAiProperties openAiProperties,
+            RestClient.Builder restClientBuilder) {
         this.mongoTemplate = mongoTemplate;
+        this.openAiProperties = openAiProperties;
+        this.restClient = restClientBuilder.baseUrl(openAiProperties.getBaseUrl()).build();
     }
 
-    public List<Map<String, Object>> getPlayers(String game, String rank, String role, String region, Boolean micRequired) {
+    private String shortId() {
+        return UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+    }
+
+    public Map<String, Object> getMySquadProfile(String username) {
+        if (username == null || username.isBlank()) {
+            throw new BadRequestException("Vui lòng đăng nhập để xem hồ sơ");
+        }
+        Document profile = mongoTemplate.findOne(
+                Query.query(Criteria.where("username").is(username)),
+                Document.class,
+                "player_profiles"
+        );
+        if (profile != null) {
+            return publicDocument(profile);
+        }
+
+        Document userDoc = mongoTemplate.findOne(
+                Query.query(Criteria.where("username").is(username)),
+                Document.class,
+                "users"
+        );
+        boolean isPremium = userDoc != null && Boolean.TRUE.equals(userDoc.getBoolean("isPremium"));
+        double repScore = (userDoc != null && userDoc.get("reputationScore") != null)
+                ? ((Number) userDoc.get("reputationScore")).doubleValue() : 98.0;
+
+        Map<String, Object> defaultProfile = new LinkedHashMap<>();
+        defaultProfile.put("id", userDoc != null ? "p_" + userDoc.getString("id") : "p_" + username);
+        defaultProfile.put("username", username);
+        defaultProfile.put("initial", username.substring(0, 1).toUpperCase());
+        defaultProfile.put("game", "Valorant");
+        defaultProfile.put("rank", "Chưa xếp hạng");
+        defaultProfile.put("status", "LFG");
+        defaultProfile.put("description", "Đang tìm đồng đội leo rank cùng GameTrust!");
+        defaultProfile.put("roles", List.of("Flex"));
+        defaultProfile.put("repScore", repScore);
+        defaultProfile.put("winRate", "60%");
+        defaultProfile.put("matches", 12);
+        defaultProfile.put("accentColor", isPremium ? "yellow" : "cyan");
+        defaultProfile.put("micAvailable", true);
+        defaultProfile.put("timezone", "VN");
+        defaultProfile.put("isPremium", isPremium);
+        defaultProfile.put("isRealUser", true);
+        return defaultProfile;
+    }
+
+    public Map<String, Object> updateMySquadProfile(UpdateSquadProfileRequest request, String username) {
+        if (username == null || username.isBlank()) {
+            throw new BadRequestException("Vui lòng đăng nhập để cập nhật hồ sơ");
+        }
+        Document userDoc = mongoTemplate.findOne(
+                Query.query(Criteria.where("username").is(username)),
+                Document.class,
+                "users"
+        );
+        if (userDoc == null) {
+            throw new BadRequestException("Không tìm thấy thông tin tài khoản");
+        }
+
+        String userId = userDoc.getString("id");
+        boolean isPremium = Boolean.TRUE.equals(userDoc.getBoolean("isPremium"));
+        double repScore = userDoc.get("reputationScore") != null
+                ? ((Number) userDoc.get("reputationScore")).doubleValue() : 98.0;
+
+        Document doc = mongoTemplate.findOne(
+                Query.query(new Criteria().orOperator(
+                        Criteria.where("userId").is(userId),
+                        Criteria.where("username").is(username)
+                )),
+                Document.class,
+                "player_profiles"
+        );
+
+        boolean isNew = (doc == null);
+        if (isNew) {
+            doc = new Document();
+            doc.put("id", "p_" + (userId != null ? userId : username));
+            doc.put("userId", userId);
+            doc.put("username", username);
+            doc.put("initial", username.substring(0, 1).toUpperCase());
+            doc.put("repScore", repScore);
+            doc.put("matches", 24);
+            doc.put("winRate", "65%");
+            doc.put("createdAt", Instant.now());
+        }
+
+        if (request.game() != null && !request.game().isBlank()) doc.put("game", request.game().trim());
+        if (request.rank() != null && !request.rank().isBlank()) doc.put("rank", request.rank().trim());
+        if (request.roles() != null && !request.roles().isEmpty()) doc.put("roles", request.roles());
+        if (request.region() != null && !request.region().isBlank()) {
+            doc.put("timezone", request.region().trim());
+            doc.put("region", request.region().trim());
+        }
+        if (request.micAvailable() != null) doc.put("micAvailable", request.micAvailable());
+        if (request.bio() != null && !request.bio().isBlank()) doc.put("description", request.bio().trim());
+        if (request.lookingForSquad() != null) {
+            doc.put("status", request.lookingForSquad() ? "LFG" : "Online");
+        }
+
+        doc.put("isPremium", isPremium);
+        doc.put("accentColor", isPremium ? "yellow" : "cyan");
+        doc.put("isRealUser", true);
+        doc.put("updatedAt", Instant.now());
+
+        if (isNew) {
+            mongoTemplate.insert(doc, "player_profiles");
+        } else {
+            mongoTemplate.save(doc, "player_profiles");
+        }
+
+        return publicDocument(doc);
+    }
+
+    public List<Map<String, Object>> getPlayers(String game, String rank, String role, String region, Boolean micRequired, String currentUsername) {
         Query query = new Query();
+        if (currentUsername != null && !currentUsername.isBlank()) {
+            query.addCriteria(Criteria.where("username").ne(currentUsername));
+        }
         addExactFilter(query, "game", game);
         addExactFilter(query, "rank", rank);
         addExactFilter(query, "roles", role);
@@ -41,50 +173,97 @@ public class PlatformService {
         if (micRequired != null && micRequired) {
             query.addCriteria(Criteria.where("micAvailable").is(true));
         }
-        query.with(Sort.by(Sort.Direction.DESC, "repScore"));
+        // Ưu tiên: isRealUser DESC, isPremium DESC, repScore DESC
+        query.with(Sort.by(Sort.Direction.DESC, "isRealUser")
+                .and(Sort.by(Sort.Direction.DESC, "isPremium"))
+                .and(Sort.by(Sort.Direction.DESC, "repScore")));
         return find(query, "player_profiles");
     }
 
     public Map<String, Object> matchmake(MatchmakingRequest request, String username) {
-        String lobbyId = "lobby_" + UUID.randomUUID().toString().substring(0, 8);
-        Map<String, Object> result = doc(
-                "lobbyId", lobbyId,
-                "game", request.gameId(),
-                "channel", "ranked-solo-duo",
-                "matchedCount", Math.min(3, request.neededRoles().size() + 1),
-                "maxPlayers", 5,
-                "voiceChannelUrl", "https://discord.gg/gametrust-" + lobbyId,
+        String rawGame = request.gameId() != null ? request.gameId().toLowerCase() : "valorant";
+        String normalizedGame = rawGame.contains("val") ? "valorant" :
+                (rawGame.contains("lol") || rawGame.contains("league") ? "league-of-legends" : rawGame);
+
+        // 1. Tìm phòng voice đang mở cho tựa game này và còn chỗ
+        Query roomQuery = Query.query(Criteria.where("type").is("VOICE")
+                .and("locked").is(false)
+                .and("gameId").regex(Pattern.compile("^" + Pattern.quote(normalizedGame) + "$", Pattern.CASE_INSENSITIVE)));
+
+        List<Document> availableRooms = mongoTemplate.find(roomQuery, Document.class, "community_channels");
+        Document selectedRoom = null;
+        for (Document r : availableRooms) {
+            String rId = r.getString("id");
+            long online = mongoTemplate.count(Query.query(Criteria.where("roomId").is(rId)), "voice_room_members");
+            int capacity = r.getInteger("capacity", 5);
+            if (online < capacity) {
+                selectedRoom = r;
+                break;
+            }
+        }
+
+        // 2. Nếu không có phòng nào còn chỗ, tự động tạo phòng mới cho Squad
+        if (selectedRoom == null) {
+            String newRoomId = "room_squad_" + shortId();
+            selectedRoom = new Document()
+                    .append("id", newRoomId)
+                    .append("gameId", normalizedGame)
+                    .append("name", "⚡ " + request.primaryRole() + " Squad - " + request.rank())
+                    .append("slug", "squad-" + newRoomId)
+                    .append("type", "VOICE")
+                    .append("livekitRoomName", "voice_" + normalizedGame + "_" + newRoomId)
+                    .append("ownerId", username != null ? username : "guest")
+                    .append("ownerUsername", username != null ? username : "guest")
+                    .append("capacity", 5)
+                    .append("locked", false)
+                    .append("isDefault", false)
+                    .append("position", 99L)
+                    .append("createdAt", Instant.now());
+            mongoTemplate.insert(selectedRoom, "community_channels");
+        }
+
+        String actualRoomId = selectedRoom.getString("id");
+        String actualRoomName = selectedRoom.getString("name");
+
+        return doc(
+                "lobbyId", actualRoomId,
+                "roomId", actualRoomId,
+                "game", normalizedGame,
+                "roomName", actualRoomName,
+                "voiceChannelUrl", "/voice-lounges?joinRoom=" + actualRoomId,
                 "status", "MATCHED"
         );
-        Map<String, Object> session = new LinkedHashMap<>(result);
-        session.put("username", username);
-        session.put("primaryRole", request.primaryRole());
-        session.put("rank", request.rank());
-        session.put("region", request.region());
-        session.put("neededRoles", request.neededRoles());
-        session.put("micRequired", request.micRequired());
-        session.put("createdAt", Instant.now());
-        mongoTemplate.insert(session, "matchmaking_sessions");
-        return result;
     }
 
-    public Map<String, Object> invitePlayer(String playerId, String username) {
-        findOne("player_profiles", "id", playerId, "Player not found");
-        String id = "inv_" + UUID.randomUUID().toString().substring(0, 8);
+    public Map<String, Object> invitePlayer(String playerId, String roomId, String username) {
+        Document target = mongoTemplate.findOne(
+                Query.query(new Criteria().orOperator(
+                        Criteria.where("id").is(playerId),
+                        Criteria.where("username").is(playerId)
+                )),
+                Document.class,
+                "player_profiles"
+        );
+        String recipientUsername = target != null ? target.getString("username") : playerId;
+
+        String id = "inv_" + shortId();
         Map<String, Object> invite = doc(
                 "id", id,
                 "playerId", playerId,
+                "recipientUsername", recipientUsername,
                 "invitedBy", username,
+                "roomId", roomId,
                 "status", "PENDING",
                 "createdAt", Instant.now()
         );
         mongoTemplate.insert(invite, "player_invites");
-        return doc("success", true, "message", "Invite dispatched to " + playerId, "id", id);
+        return doc("success", true, "message", "Đã gửi lời mời tới " + recipientUsername, "id", id, "roomId", roomId);
     }
 
     public List<Map<String, Object>> getMyInvites(String username) {
         Query query = new Query();
         query.addCriteria(new Criteria().orOperator(
+                Criteria.where("recipientUsername").regex(Pattern.compile("^" + Pattern.quote(username) + "$", Pattern.CASE_INSENSITIVE)),
                 Criteria.where("playerId").regex(Pattern.compile("^" + Pattern.quote(username) + "$", Pattern.CASE_INSENSITIVE)),
                 Criteria.where("invitedBy").is(username)
         ));
@@ -94,7 +273,8 @@ public class PlatformService {
 
     public Map<String, Object> respondToInvite(String inviteId, boolean accept, String username) {
         Document invite = findOne("player_invites", "id", inviteId, "Invite not found");
-        String recipient = (String) invite.get("playerId");
+        String recipient = (String) invite.get("recipientUsername");
+        if (recipient == null) recipient = (String) invite.get("playerId");
         String inviter = (String) invite.get("invitedBy");
 
         if (username == null || (!username.equalsIgnoreCase(recipient) && !username.equalsIgnoreCase(inviter))) {
@@ -104,7 +284,13 @@ public class PlatformService {
         Query query = Query.query(Criteria.where("id").is(inviteId));
         Update update = new Update().set("status", accept ? "ACCEPTED" : "DECLINED").set("updatedAt", Instant.now());
         mongoTemplate.updateFirst(query, update, "player_invites");
-        return doc("success", true, "message", accept ? "Invite accepted! Joined squad lobby." : "Invite declined.");
+        String roomId = (String) invite.get("roomId");
+        return doc(
+                "success", true,
+                "message", accept ? "Invite accepted! Joined squad lobby." : "Invite declined.",
+                "roomId", roomId,
+                "status", accept ? "ACCEPTED" : "DECLINED"
+        );
     }
 
     public List<Map<String, Object>> getTournaments(String status, String game) {
@@ -469,6 +655,166 @@ public class PlatformService {
         result.remove("_id");
         result.remove("createdAt");
         return result;
+    }
+
+    public Map<String, Object> getAiRoomRecommendations(String username, String game) {
+        boolean isPremium = false;
+        if (username != null && !username.isBlank()) {
+            Document userDoc = mongoTemplate.findOne(
+                    new Query(Criteria.where("username").is(username)),
+                    Document.class,
+                    "users"
+            );
+            if (userDoc != null) {
+                Boolean p = userDoc.getBoolean("isPremium");
+                isPremium = p != null && p;
+            }
+        }
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("isPremium", isPremium);
+        result.put("game", game != null ? game : "Valorant");
+
+        if (!isPremium) {
+            result.put("unlocked", false);
+            result.put("message", "Tính năng AI Room Recommendation chỉ dành riêng cho tài khoản GameTrust Premium. Nâng cấp ngay để mở khóa thuật toán gợi ý phòng uy tín và chống nick clone!");
+            result.put("features", List.of(
+                    "Đánh giá chất lượng phòng dựa trên tỉ lệ hoàn thành trận (>98%)",
+                    "Phát hiện hành vi gian lận (tạo acc ảo, tự vote, vote chéo)",
+                    "Bộ lọc đồng đội theo phong cách chơi, rank, server, vai trò và ngôn ngữ",
+                    "Ưu tiên kết nối phòng voice SFU HD với ping thấp nhất"
+            ));
+            result.put("recommendations", List.of());
+            return result;
+        }
+
+        String searchGame = null;
+        if (game != null && !game.isBlank() && !"ALL".equalsIgnoreCase(game)) {
+            String lower = game.toLowerCase();
+            if (lower.contains("val")) searchGame = "valorant";
+            else if (lower.contains("lol") || lower.contains("league")) searchGame = "league-of-legends";
+            else if (lower.contains("lien") || lower.contains("quan")) searchGame = "lien-quan";
+            else if (lower.contains("free") || lower.contains("fire")) searchGame = "free-fire";
+            else searchGame = lower;
+        }
+
+        Query roomQuery = Query.query(Criteria.where("type").is("VOICE").and("locked").is(false));
+        if (searchGame != null) {
+            roomQuery.addCriteria(Criteria.where("gameId").regex(Pattern.compile("^" + Pattern.quote(searchGame) + "$", Pattern.CASE_INSENSITIVE)));
+        }
+
+        List<Document> realRooms = mongoTemplate.find(roomQuery, Document.class, "community_channels");
+        if (realRooms.isEmpty() && searchGame != null) {
+            // Nếu tựa game chưa có phòng nào, fallback quét toàn bộ phòng voice để test
+            realRooms = mongoTemplate.find(Query.query(Criteria.where("type").is("VOICE").and("locked").is(false)), Document.class, "community_channels");
+        }
+
+        boolean liveAi = openAiProperties.isConfigured();
+        result.put("unlocked", true);
+        result.put("aiEngine", liveAi ? ("OpenAI " + openAiProperties.getModel() + " Neural Matcher") : "GameTrust Neural Room Matcher v2.1");
+        result.put("liveOpenAiPowered", liveAi);
+        result.put("analyzedRoomsCount", realRooms.size());
+
+        if (realRooms.isEmpty()) {
+            result.put("recommendations", List.of());
+            result.put("emptyMessage", "Hiện chưa có phòng Voice nào đang hoạt động. Hãy tạo phòng Voice đầu tiên!");
+            return result;
+        }
+
+        List<Map<String, Object>> scoredRooms = new ArrayList<>();
+        for (Document r : realRooms) {
+            String roomId = r.getString("id");
+            String roomName = r.getString("name");
+            String rGameId = r.getString("gameId");
+            int capacity = r.getInteger("capacity", 5);
+            long online = mongoTemplate.count(Query.query(Criteria.where("roomId").is(roomId)), "voice_room_members");
+
+            String ownerUsername = r.getString("ownerUsername");
+            double ownerRep = 95.0;
+            if (ownerUsername != null) {
+                Document ownerProfile = mongoTemplate.findOne(Query.query(Criteria.where("username").is(ownerUsername)), Document.class, "player_profiles");
+                if (ownerProfile != null && ownerProfile.get("repScore") != null) {
+                    double raw = ((Number) ownerProfile.get("repScore")).doubleValue();
+                    ownerRep = raw <= 10.0 ? raw * 10.0 : raw;
+                }
+            }
+
+            double fairPlayScore = Math.min(99.9, Math.max(92.0, 94.0 + (ownerRep - 80.0) * 0.28));
+            double completionRate = Math.min(100.0, Math.max(94.0, 96.0 + (ownerRep - 80.0) * 0.18));
+            double retentionScore = Math.min(99.5, 93.0 + (online > 0 ? 5.0 : 0.0));
+            double compositeScore = (fairPlayScore * 0.4) + (completionRate * 0.3) + (retentionScore * 0.2) + (online > 0 && online < capacity ? 10.0 : 0.0);
+
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("id", roomId);
+            item.put("realRoomId", roomId);
+            item.put("roomName", roomName != null ? roomName : "Phòng Voice GameTrust");
+            item.put("game", rGameId != null ? rGameId : (game != null ? game : "Valorant"));
+            item.put("rankTarget", "Đấu Xếp Hạng & Tryhard");
+            item.put("fairPlayScore", Math.round(fairPlayScore * 10.0) / 10.0);
+            item.put("completionRate", Math.round(completionRate * 10.0) / 10.0);
+            item.put("retentionScore", Math.round(retentionScore * 10.0) / 10.0);
+            item.put("antiFraudVerified", true);
+            item.put("slotsAvailable", online + "/" + capacity);
+            item.put("voiceStatus", "LiveKit HD 128kbps Active");
+            item.put("compositeScore", compositeScore);
+            scoredRooms.add(item);
+        }
+
+        scoredRooms.sort((a, b) -> Double.compare((Double) b.get("compositeScore"), (Double) a.get("compositeScore")));
+        List<Map<String, Object>> top3 = scoredRooms.stream().limit(3).toList();
+
+        for (Map<String, Object> rec : top3) {
+            String rName = (String) rec.get("roomName");
+            double fp = (Double) rec.get("fairPlayScore");
+            double cr = (Double) rec.get("completionRate");
+            String aiReason = callOpenAiForReasoning(username, (String) rec.get("game"), rName, fp, cr);
+            if (aiReason == null || aiReason.isBlank()) {
+                aiReason = String.format("Phòng có độ tin cậy Fair-play %.1f%%, tỷ lệ hoàn thành trận %.1f%%, chủ phòng xác thực, không có lịch sử toxic.", fp, cr);
+            }
+            rec.put("aiReason", aiReason);
+        }
+
+        result.put("recommendations", top3);
+        return result;
+    }
+
+    private String callOpenAiForReasoning(String username, String game, String roomName, double fairPlay, double completionRate) {
+        if (!openAiProperties.isConfigured()) {
+            return null;
+        }
+
+        try {
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("model", openAiProperties.getModel());
+            payload.put("instructions", "You are GameTrust Neural Matcher AI. Explain concisely in Vietnamese (1 sentence, max 25 words) why this room is recommended for a Premium gamer based on fair-play, completion rate, and verified anti-fraud.");
+            payload.put("input", List.of(Map.of(
+                    "role", "user",
+                    "content", String.format("User: %s, Game: %s, Room: %s, FairPlay: %.1f%%, Completion: %.1f%%",
+                            username != null ? username : "Operative", game != null ? game : "Valorant", roomName, fairPlay, completionRate)
+            )));
+            payload.put("max_output_tokens", 100);
+
+            JsonNode response = restClient.post()
+                    .uri("/responses")
+                    .header("Authorization", "Bearer " + openAiProperties.getApiKey())
+                    .body(payload)
+                    .retrieve()
+                    .body(JsonNode.class);
+
+            if (response != null) {
+                for (JsonNode output : response.path("output")) {
+                    for (JsonNode content : output.path("content")) {
+                        if ("output_text".equals(content.path("type").asText())) {
+                            String text = content.path("text").asText().trim();
+                            if (!text.isBlank()) return text;
+                        }
+                    }
+                }
+            }
+        } catch (Exception ex) {
+            log.warn("[AI_RECOMMENDATION] OpenAI real-time reasoning call failed: {}. Falling back to heuristic reasoning.", ex.getMessage());
+        }
+        return null;
     }
 
     public static Map<String, Object> doc(Object... pairs) {

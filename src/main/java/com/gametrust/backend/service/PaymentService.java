@@ -2,6 +2,7 @@ package com.gametrust.backend.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.gametrust.backend.dto.auth.UserResponse;
 import com.gametrust.backend.dto.payment.CreatePaymentRequest;
 import com.gametrust.backend.dto.payment.PaymentResponse;
 import com.gametrust.backend.entity.User;
@@ -145,6 +146,21 @@ public class PaymentService {
         response.setBankName("MBBank");
         response.setStatus("PENDING");
 
+        String vietQrUrl = "https://img.vietqr.io/image/970422-0838939851-compact2.png?amount=" + amountVnd
+                + "&addInfo=" + description + "&accountName=DO%20TRONG%20TIN";
+
+        String payosClientId = environment.getProperty("payos.client-id", "");
+        String payosChecksum = environment.getProperty("payos.checksum-key", "");
+        if (payosClientId.isBlank() || payosChecksum.isBlank() || payosClientId.startsWith("your_")) {
+            log.warn("[PAYMENT_FALLBACK] PayOS keys not configured. Using direct VietQR for orderCode {}", orderCode);
+            response.setQrImageUrl(vietQrUrl);
+            WalletTransaction transaction = new WalletTransaction(
+                    orderCode, effectiveUserId, username != null ? username : "Operative",
+                    amountUsd, (int) amountVnd, description);
+            transactionRepository.save(transaction);
+            return response;
+        }
+
         try {
             CreatePaymentLinkResponse checkoutData = payOS.paymentRequests().create(paymentData);
             response.setCheckoutUrl(checkoutData.getCheckoutUrl());
@@ -170,8 +186,18 @@ public class PaymentService {
                     orderCode, effectiveUserId, amountVnd, amountUsd);
 
         } catch (Exception ex) {
-            log.error("[PAYMENT_ERROR] Failed to communicate with PayOS gateway: {}", ex.getMessage(), ex);
-            throw new BadRequestException("Không thể tạo liên kết thanh toán qua cổng PayOS. Vui lòng thử lại sau: " + ex.getMessage());
+            log.error("[PAYMENT_ERROR] Failed to communicate with PayOS gateway: {}. Falling back to VietQR direct.", ex.getMessage(), ex);
+            response.setQrImageUrl(vietQrUrl);
+            WalletTransaction transaction = new WalletTransaction(
+                    orderCode,
+                    effectiveUserId,
+                    username != null ? username : "Operative",
+                    amountUsd,
+                    (int) amountVnd,
+                    description
+            );
+            transactionRepository.save(transaction);
+            return response;
         }
 
         return response;
@@ -553,5 +579,50 @@ public class PaymentService {
             return userRepository.findByUsername("toàn").map(User::getWalletBalance).orElse(170000.0);
         }
         return 150000.0;
+    }
+
+    public synchronized UserResponse subscribePremium(String userId, String username) {
+        if (userId == null || userId.isBlank() || "guest".equalsIgnoreCase(userId)) {
+            throw new UnauthorizedException("Vui lòng đăng nhập để nâng cấp tài khoản Premium.");
+        }
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy thông tin tài khoản: " + userId));
+
+        double currentBal = user.getWalletBalance();
+        long costVnd = 49000L;
+        if (currentBal < costVnd) {
+            throw new BadRequestException("Số dư ví không đủ 49.000 VNĐ. Vui lòng nạp thêm PayOS để kích hoạt gói Premium!");
+        }
+
+        user.setWalletBalance(currentBal - costVnd);
+        user.setPremium(true);
+        user.setPremiumTier("PREMIUM");
+        Instant now = Instant.now();
+        Instant expiresAt = (user.getPremiumExpiresAt() != null && user.getPremiumExpiresAt().isAfter(now))
+                ? user.getPremiumExpiresAt().plus(30, ChronoUnit.DAYS)
+                : now.plus(30, ChronoUnit.DAYS);
+        user.setPremiumExpiresAt(expiresAt);
+        user.touch();
+        userRepository.save(user);
+
+        long orderCode = Long.parseLong(String.valueOf(System.currentTimeMillis()).substring(5));
+        WalletTransaction tx = new WalletTransaction(
+                orderCode,
+                user.getId(),
+                user.getUsername(),
+                Math.round((costVnd / (double) USD_TO_VND_RATE) * 100.0) / 100.0,
+                (int) costVnd,
+                "Đăng ký GameTrust Premium 30 ngày (Mở khóa AI Room Recommendation)"
+        );
+        tx.setStatus("SUCCESS");
+        tx.setMethod("WALLET");
+        tx.setCredited(true);
+        tx.setPaidAt(now);
+        transactionRepository.save(tx);
+
+        log.info("[PREMIUM_ACTIVATED] User {} ({}) successfully subscribed to Premium 30 days. New balance: {}",
+                user.getUsername(), user.getId(), user.getWalletBalance());
+
+        return UserResponse.fromUser(user);
     }
 }

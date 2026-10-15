@@ -42,4 +42,14 @@ public final class PlatformRequests {
             @NotBlank String type,
             String reason) {
     }
+
+    public record UpdateSquadProfileRequest(
+            String game,
+            String rank,
+            List<String> roles,
+            String region,
+            Boolean micAvailable,
+            String bio,
+            Boolean lookingForSquad) {
+    }
 }

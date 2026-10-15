@@ -34,6 +34,15 @@ public class User {
     @Field("avatarUrl")
     private String avatarUrl;
 
+    @Field("isPremium")
+    private boolean isPremium = false;
+
+    @Field("premiumTier")
+    private String premiumTier;
+
+    @Field("premiumExpiresAt")
+    private Instant premiumExpiresAt;
+
     @Field("createdAt")
     private Instant createdAt = Instant.now();
 
@@ -128,6 +137,30 @@ public class User {
 
     public void setAvatarUrl(String avatarUrl) {
         this.avatarUrl = avatarUrl;
+    }
+
+    public boolean isPremium() {
+        return isPremium;
+    }
+
+    public void setPremium(boolean premium) {
+        isPremium = premium;
+    }
+
+    public String getPremiumTier() {
+        return premiumTier;
+    }
+
+    public void setPremiumTier(String premiumTier) {
+        this.premiumTier = premiumTier;
+    }
+
+    public Instant getPremiumExpiresAt() {
+        return premiumExpiresAt;
+    }
+
+    public void setPremiumExpiresAt(Instant premiumExpiresAt) {
+        this.premiumExpiresAt = premiumExpiresAt;
     }
 
     public Instant getCreatedAt() {
