@@ -1,6 +1,7 @@
 package com.gametrust.backend.controller;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.gametrust.backend.dto.auth.UserResponse;
 import com.gametrust.backend.dto.common.ApiResponse;
 import com.gametrust.backend.dto.payment.CreatePaymentRequest;
 import com.gametrust.backend.dto.payment.PaymentResponse;
@@ -89,5 +90,13 @@ public class PaymentController {
         String userId = user != null ? user.getId() : null;
         com.gametrust.backend.dto.payment.PaymentStatusResponse status = paymentService.checkByTransferRef(ref, userId);
         return ApiResponse.success("Transfer reference checked", status);
+    }
+
+    @PostMapping("/subscribe-premium")
+    public ApiResponse<UserResponse> subscribePremium(@AuthenticationPrincipal UserPrincipal user) {
+        String userId = user != null ? user.getId() : "guest";
+        String username = user != null ? user.getUsername() : "Operative";
+        UserResponse response = paymentService.subscribePremium(userId, username);
+        return ApiResponse.success("Đăng ký GameTrust Premium thành công! Đã kích hoạt quyền lợi AI Room Recommendation.", response);
     }
 }

@@ -2,6 +2,8 @@ package com.gametrust.backend.controller;
 
 import com.gametrust.backend.dto.common.ApiResponse;
 import com.gametrust.backend.dto.platform.PlatformRequests.MatchmakingRequest;
+import com.gametrust.backend.dto.platform.PlatformRequests.UpdateSquadProfileRequest;
+import com.gametrust.backend.exception.BadRequestException;
 import com.gametrust.backend.service.PlatformService;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
@@ -21,14 +23,34 @@ public class SquadController {
         this.service = service;
     }
 
+    @GetMapping("/me/profile")
+    public ApiResponse<Map<String, Object>> getMyProfile(@AuthenticationPrincipal UserDetails user) {
+        if (user == null) {
+            throw new BadRequestException("Vui lòng đăng nhập");
+        }
+        return ApiResponse.success(service.getMySquadProfile(user.getUsername()));
+    }
+
+    @PutMapping("/me/profile")
+    public ApiResponse<Map<String, Object>> updateMyProfile(
+            @Valid @RequestBody UpdateSquadProfileRequest request,
+            @AuthenticationPrincipal UserDetails user) {
+        if (user == null) {
+            throw new BadRequestException("Vui lòng đăng nhập");
+        }
+        return ApiResponse.success(service.updateMySquadProfile(request, user.getUsername()));
+    }
+
     @GetMapping("/players")
     public ApiResponse<List<Map<String, Object>>> players(
             @RequestParam(required = false) String game,
             @RequestParam(required = false) String rank,
             @RequestParam(required = false) String role,
             @RequestParam(required = false) String region,
-            @RequestParam(required = false) Boolean micRequired) {
-        return ApiResponse.success(service.getPlayers(game, rank, role, region, micRequired));
+            @RequestParam(required = false) Boolean micRequired,
+            @AuthenticationPrincipal UserDetails user) {
+        String currentUsername = user != null ? user.getUsername() : null;
+        return ApiResponse.success(service.getPlayers(game, rank, role, region, micRequired, currentUsername));
     }
 
     @PostMapping("/matchmake")
@@ -41,8 +63,9 @@ public class SquadController {
     @PostMapping("/invite/{playerId}")
     public ApiResponse<Map<String, Object>> invite(
             @PathVariable String playerId,
+            @RequestParam(required = false) String roomId,
             @AuthenticationPrincipal UserDetails user) {
-        return ApiResponse.success(service.invitePlayer(playerId, user.getUsername()));
+        return ApiResponse.success(service.invitePlayer(playerId, roomId, user.getUsername()));
     }
 
     @GetMapping("/invites/my")
@@ -57,5 +80,13 @@ public class SquadController {
             @RequestParam(defaultValue = "true") boolean accept,
             @AuthenticationPrincipal UserDetails user) {
         return ApiResponse.success(service.respondToInvite(id, accept, user.getUsername()));
+    }
+
+    @GetMapping("/ai-recommendations")
+    public ApiResponse<Map<String, Object>> aiRecommendations(
+            @RequestParam(required = false, defaultValue = "Valorant") String game,
+            @AuthenticationPrincipal UserDetails user) {
+        String username = user != null ? user.getUsername() : null;
+        return ApiResponse.success(service.getAiRoomRecommendations(username, game));
     }
 }

@@ -59,12 +59,14 @@ public class SecurityConfig {
                         // Public authentication endpoints
                         .requestMatchers(
                                 "/api/auth/register",
+                                "/api/auth/direct-register",
                                 "/api/auth/send-registration-otp",
                                 "/api/auth/verify-registration-otp",
                                 "/api/auth/login",
                                 "/api/auth/refresh-token",
                                 "/api/auth/refresh",
-                                "/api/auth/logout"
+                                "/api/auth/logout",
+                                "/api/ai/**"
                         ).permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/livekit/webhook").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/payment/webhook").permitAll()

@@ -16,6 +16,9 @@ public class UserResponse {
     private boolean active = true;
     private Instant createdAt;
     private Double walletBalance;
+    private boolean isPremium = false;
+    private String premiumTier;
+    private Instant premiumExpiresAt;
 
     public UserResponse() {
     }
@@ -36,7 +39,7 @@ public class UserResponse {
         if (user == null) {
             return null;
         }
-        return new UserResponse(
+        UserResponse response = new UserResponse(
                 user.getId(),
                 user.getUsername(),
                 user.getEmail(),
@@ -47,6 +50,10 @@ public class UserResponse {
                 user.getCreatedAt(),
                 user.getWalletBalance()
         );
+        response.setPremium(user.isPremium());
+        response.setPremiumTier(user.getPremiumTier());
+        response.setPremiumExpiresAt(user.getPremiumExpiresAt());
+        return response;
     }
 
     public String getId() {
@@ -119,5 +126,29 @@ public class UserResponse {
 
     public void setWalletBalance(Double walletBalance) {
         this.walletBalance = walletBalance;
+    }
+
+    public boolean isPremium() {
+        return isPremium;
+    }
+
+    public void setPremium(boolean premium) {
+        isPremium = premium;
+    }
+
+    public String getPremiumTier() {
+        return premiumTier;
+    }
+
+    public void setPremiumTier(String premiumTier) {
+        this.premiumTier = premiumTier;
+    }
+
+    public Instant getPremiumExpiresAt() {
+        return premiumExpiresAt;
+    }
+
+    public void setPremiumExpiresAt(Instant premiumExpiresAt) {
+        this.premiumExpiresAt = premiumExpiresAt;
     }
 }

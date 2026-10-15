@@ -45,6 +45,19 @@ public class AuthController {
                 .body(ApiResponse.success("Account registered successfully", response));
     }
 
+    @PostMapping("/direct-register")
+    @Operation(summary = "Direct register without OTP", description = "Registers gamer account directly with username, email and password")
+    public ResponseEntity<ApiResponse<AuthResponse>> directRegister(@Valid @RequestBody RegisterRequest request) {
+        AuthResponse response = authService.register(request);
+        ResponseCookie accessCookie = jwtService.generateAccessTokenCookie(response.getAccessToken());
+        ResponseCookie refreshCookie = jwtService.generateRefreshTokenCookie(response.getRefreshToken());
+
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .header(HttpHeaders.SET_COOKIE, accessCookie.toString())
+                .header(HttpHeaders.SET_COOKIE, refreshCookie.toString())
+                .body(ApiResponse.success("Account registered successfully", response));
+    }
+
     @PostMapping("/send-registration-otp")
     @Operation(summary = "Send OTP code to email for registration", description = "Validates username and email uniqueness, generates 6-digit OTP and sends it via email")
     public ResponseEntity<ApiResponse<Void>> sendRegistrationOtp(@Valid @RequestBody SendOtpRequest request) {
