@@ -36,8 +36,8 @@ public class OpenAiChatService {
 
     public AiChatResponse chat(AiChatRequest request) {
         if (!properties.isConfigured()) {
-            String lastMsg = request.messages().isEmpty() ? "" : request.messages().get(request.messages().size() - 1).content();
-            return new AiChatResponse(generateFallbackReply(lastMsg), "gpt-4o-tactical-fallback");
+            throw new AiServiceException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "AI chat is not configured. Set OPENAI_API_KEY on the backend.");
         }
 
         List<Map<String, String>> input = request.messages().stream()
@@ -106,17 +106,4 @@ public class OpenAiChatService {
                 "OpenAI returned an empty response.");
     }
 
-    private String generateFallbackReply(String msg) {
-        String lower = msg.toLowerCase();
-        if (lower.contains("leo rank") || lower.contains("tướng") || lower.contains("agent") || lower.contains("pick") || lower.contains("chơi")) {
-            return "Leo Coach: Đề xuất chiến thuật leo rank:\n1. Solo Queue: Chọn Controller (Omen/Brimstone) hoặc Initiator (Sova/Fade) để kiểm soát tầm nhìn và round đấu.\n2. Hãy giao tiếp bằng Voice Chat ngắn gọn (Callout vị trí, HP địch).\n3. Giữ tâm lý Fair-play, điểm tín nhiệm cao sẽ giúp bạn ghép với đồng đội chất lượng!";
-        }
-        if (lower.contains("toxic") || lower.contains("phá game")) {
-            return "Leo Coach: Khi gặp đồng đội toxic hoặc phá game:\n1. Tắt voice của người đó ngay (Mute).\n2. Tập trung vào mục tiêu và phối hợp với những đồng đội còn lại.\n3. Dùng tính năng Báo cáo của GameTrust sau trận để hệ thống trừ điểm tín nhiệm của họ!";
-        }
-        if (lower.contains("ai dùng đc không") || lower.contains("dùng được không") || lower.contains("test")) {
-            return "Leo Coach: Chào đặc vụ! Hệ thống AI Coach đang hoạt động 100% trên nền tảng GameTrust Mobile. Bạn cần hỗ trợ chiến thuật trận nào?";
-        }
-        return "Leo Coach: Chào đặc vụ! Tôi là trợ lý chiến thuật AI GameTrust. Bạn có thể hỏi tôi về line-up Valorant, mẹo leo rank, kiểm soát bản đồ hoặc cách phối hợp Voice Chat cùng Squad!";
-    }
 }

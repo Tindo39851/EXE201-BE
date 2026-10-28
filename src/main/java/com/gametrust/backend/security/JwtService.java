@@ -128,7 +128,7 @@ public class JwtService {
                 .maxAge(expiration / 1000)
                 .httpOnly(true)
                 .secure(cookieSecure)
-                .sameSite("Lax")
+                .sameSite(cookieSameSite())
                 .build();
     }
 
@@ -138,7 +138,7 @@ public class JwtService {
                 .maxAge(refreshExpiration / 1000)
                 .httpOnly(true)
                 .secure(cookieSecure)
-                .sameSite("Lax")
+                .sameSite(cookieSameSite())
                 .build();
     }
 
@@ -148,7 +148,7 @@ public class JwtService {
                 .maxAge(0)
                 .httpOnly(true)
                 .secure(cookieSecure)
-                .sameSite("Lax")
+                .sameSite(cookieSameSite())
                 .build();
     }
 
@@ -158,7 +158,11 @@ public class JwtService {
                 .maxAge(0)
                 .httpOnly(true)
                 .secure(cookieSecure)
-                .sameSite("Lax")
+                .sameSite(cookieSameSite())
                 .build();
+    }
+
+    private String cookieSameSite() {
+        return cookieSecure ? "None" : "Lax";
     }
 }

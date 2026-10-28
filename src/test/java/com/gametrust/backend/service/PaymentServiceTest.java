@@ -2,7 +2,9 @@ package com.gametrust.backend.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.gametrust.backend.dto.payment.CreatePaymentRequest;
+import com.gametrust.backend.entity.WalletTransaction;
 import com.gametrust.backend.exception.BadRequestException;
+import com.gametrust.backend.exception.UnauthorizedException;
 import com.gametrust.backend.repository.UserRepository;
 import com.gametrust.backend.repository.WalletTransactionRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -16,6 +18,7 @@ import org.springframework.data.mongodb.core.MongoTemplate;
 import vn.payos.PayOS;
 
 import java.time.Instant;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.*;
@@ -88,6 +91,29 @@ class PaymentServiceTest {
 
         assertThrows(BadRequestException.class, () ->
                 paymentService.createPaymentLink(request, "user123", "User")
+        );
+    }
+
+    @Test
+    @DisplayName("Should not expose another user's payment status")
+    void shouldRejectPaymentStatusForDifferentUser() {
+        WalletTransaction transaction = new WalletTransaction(123456L, "owner-id", "Owner", 1.97, 50000, "GT123456");
+        when(transactionRepository.findByOrderCode(123456L)).thenReturn(Optional.of(transaction));
+
+        assertThrows(UnauthorizedException.class, () ->
+                paymentService.checkPaymentStatus(123456L, "attacker-id", false)
+        );
+    }
+
+    @Test
+    @DisplayName("Should not let a user simulate success for another user's payment")
+    void shouldRejectSimulationForDifferentUser() {
+        WalletTransaction transaction = new WalletTransaction(654321L, "owner-id", "Owner", 1.97, 50000, "GT654321");
+        when(environment.acceptsProfiles(any(org.springframework.core.env.Profiles.class))).thenReturn(false);
+        when(transactionRepository.findByOrderCode(654321L)).thenReturn(Optional.of(transaction));
+
+        assertThrows(UnauthorizedException.class, () ->
+                paymentService.simulateSuccess(654321L, "attacker-id", false)
         );
     }
 }

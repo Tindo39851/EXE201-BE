@@ -195,7 +195,7 @@ public class CommunityService {
         return room;
     }
 
-    public Map<String, Object> joinVoiceRoom(String roomId, UserPrincipal user) {
+    public synchronized Map<String, Object> joinVoiceRoom(String roomId, UserPrincipal user) {
         Document room = requireChannel(roomId, "VOICE");
         if (Boolean.TRUE.equals(room.getBoolean("locked")) && !canManage(room, user)) {
             throw new BadRequestException("This voice room is locked");
@@ -222,6 +222,10 @@ public class CommunityService {
         try {
             mongoTemplate.insert(member, VOICE_MEMBERS);
         } catch (DuplicateKeyException ex) {
+            Document concurrentJoin = mongoTemplate.findOne(currentQuery, Document.class, VOICE_MEMBERS);
+            if (concurrentJoin != null && roomId.equals(concurrentJoin.getString("roomId"))) {
+                return getRoom(roomId);
+            }
             throw new BadRequestException("You are already connected to a voice room");
         }
         return getRoom(roomId);

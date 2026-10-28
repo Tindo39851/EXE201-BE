@@ -298,9 +298,15 @@ public class PaymentService {
         }
     }
 
-    public boolean simulateSuccess(long orderCode) {
+    public boolean simulateSuccess(long orderCode, String callerUserId, boolean isAdmin) {
         if (environment.acceptsProfiles(Profiles.of("prod", "production"))) {
             throw new BadRequestException("Cửa sau mô phỏng bị vô hiệu hóa hoàn toàn trên môi trường Production vì lý do an toàn ngân hàng.");
+        }
+
+        WalletTransaction existing = transactionRepository.findByOrderCode(orderCode)
+                .orElseThrow(() -> new ResourceNotFoundException("Giao dịch không tồn tại với mã đơn " + orderCode));
+        if (!isAdmin && (callerUserId == null || !callerUserId.equals(existing.getUserId()))) {
+            throw new UnauthorizedException("Bạn không có quyền mô phỏng giao dịch của tài khoản khác.");
         }
 
         Query query = new Query(Criteria.where("orderCode").is(orderCode).and("status").is("PENDING"));
@@ -335,7 +341,7 @@ public class PaymentService {
         WalletTransaction tx = optionalTx.get();
 
         // Ownership enforcement: Only owner or admin can inspect this transaction
-        if (!isAdmin && callerUserId != null && !callerUserId.equals(tx.getUserId())) {
+        if (!isAdmin && (callerUserId == null || !callerUserId.equals(tx.getUserId()))) {
             throw new UnauthorizedException("Bạn không có quyền truy cập thông tin giao dịch này.");
         }
 

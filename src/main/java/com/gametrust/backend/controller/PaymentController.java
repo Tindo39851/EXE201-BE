@@ -68,14 +68,26 @@ public class PaymentController {
     }
 
     @GetMapping("/check-status/{orderCode}")
-    public ApiResponse<com.gametrust.backend.dto.payment.PaymentStatusResponse> checkStatus(@PathVariable long orderCode) {
-        com.gametrust.backend.dto.payment.PaymentStatusResponse status = paymentService.checkPaymentStatus(orderCode);
+    public ApiResponse<com.gametrust.backend.dto.payment.PaymentStatusResponse> checkStatus(
+            @PathVariable long orderCode,
+            @AuthenticationPrincipal UserPrincipal user) {
+        com.gametrust.backend.dto.payment.PaymentStatusResponse status = paymentService.checkPaymentStatus(
+                orderCode,
+                user != null ? user.getId() : null,
+                isAdmin(user)
+        );
         return ApiResponse.success("Payment status retrieved", status);
     }
 
     @PostMapping("/simulate-success/{orderCode}")
-    public ApiResponse<Map<String, Object>> simulateSuccess(@PathVariable long orderCode) {
-        boolean ok = paymentService.simulateSuccess(orderCode);
+    public ApiResponse<Map<String, Object>> simulateSuccess(
+            @PathVariable long orderCode,
+            @AuthenticationPrincipal UserPrincipal user) {
+        boolean ok = paymentService.simulateSuccess(
+                orderCode,
+                user != null ? user.getId() : null,
+                isAdmin(user)
+        );
         return ApiResponse.success("Simulation completed", Map.of("success", ok, "orderCode", orderCode));
     }
 
@@ -98,5 +110,10 @@ public class PaymentController {
         String username = user != null ? user.getUsername() : "Operative";
         UserResponse response = paymentService.subscribePremium(userId, username);
         return ApiResponse.success("Đăng ký GameTrust Premium thành công! Đã kích hoạt quyền lợi AI Room Recommendation.", response);
+    }
+
+    private boolean isAdmin(UserPrincipal user) {
+        return user != null && user.getAuthorities().stream()
+                .anyMatch(authority -> "ROLE_ADMIN".equals(authority.getAuthority()));
     }
 }
