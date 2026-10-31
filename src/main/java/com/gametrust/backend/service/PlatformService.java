@@ -39,14 +39,17 @@ public class PlatformService {
     private final MongoTemplate mongoTemplate;
     private final OpenAiProperties openAiProperties;
     private final RestClient restClient;
+    private final SocialFeedEventService socialFeedEvents;
 
     public PlatformService(
             MongoTemplate mongoTemplate,
             OpenAiProperties openAiProperties,
-            RestClient.Builder restClientBuilder) {
+            RestClient.Builder restClientBuilder,
+            SocialFeedEventService socialFeedEvents) {
         this.mongoTemplate = mongoTemplate;
         this.openAiProperties = openAiProperties;
         this.restClient = restClientBuilder.baseUrl(openAiProperties.getBaseUrl()).build();
+        this.socialFeedEvents = socialFeedEvents;
     }
 
     private String shortId() {
@@ -607,6 +610,7 @@ public class PlatformService {
         );
         mongoTemplate.insert(post, "social_posts");
         post.remove("createdAt");
+        socialFeedEvents.publish("POST_CREATED", id);
         return post;
     }
 
@@ -630,6 +634,7 @@ public class PlatformService {
         }
         long count = mongoTemplate.count(Query.query(Criteria.where("postId").is(postId)), "social_post_likes");
         boolean currentUserLiked = mongoTemplate.exists(likeQuery, "social_post_likes");
+        socialFeedEvents.publish("POST_UPDATED", postId);
         return doc("liked", currentUserLiked, "count", count);
     }
 
@@ -650,6 +655,7 @@ public class PlatformService {
                 .append("content", content.trim())
                 .append("createdAt", Instant.now());
         mongoTemplate.insert(comment, "social_post_comments");
+        socialFeedEvents.publish("COMMENT_CREATED", postId);
         return publicDocument(comment);
     }
 
@@ -663,6 +669,7 @@ public class PlatformService {
         mongoTemplate.remove(Query.query(Criteria.where("postId").is(postId)), "social_post_likes");
         mongoTemplate.remove(Query.query(Criteria.where("postId").is(postId)), "social_post_comments");
         mongoTemplate.remove(Query.query(Criteria.where("id").is(postId)), "social_posts");
+        socialFeedEvents.publish("POST_DELETED", postId);
     }
 
     private String likeId(String postId, String userId) {

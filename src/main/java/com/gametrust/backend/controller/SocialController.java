@@ -4,6 +4,7 @@ import com.gametrust.backend.dto.common.ApiResponse;
 import com.gametrust.backend.dto.platform.PlatformRequests.CreatePostRequest;
 import com.gametrust.backend.dto.platform.PlatformRequests.CreateCommentRequest;
 import com.gametrust.backend.service.PlatformService;
+import com.gametrust.backend.service.SocialFeedEventService;
 import com.gametrust.backend.security.UserPrincipal;
 import jakarta.validation.Valid;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -11,14 +12,23 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.Map;
+import org.springframework.http.MediaType;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 @RestController
 @RequestMapping("/api/social")
 public class SocialController {
     private final PlatformService service;
+    private final SocialFeedEventService events;
 
-    public SocialController(PlatformService service) {
+    public SocialController(PlatformService service, SocialFeedEventService events) {
         this.service = service;
+        this.events = events;
+    }
+
+    @GetMapping(value = "/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter events() {
+        return events.subscribe();
     }
 
     @GetMapping("/feed")
