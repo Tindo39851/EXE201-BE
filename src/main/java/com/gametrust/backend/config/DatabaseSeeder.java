@@ -218,6 +218,12 @@ public class DatabaseSeeder implements CommandLineRunner {
         Query channelQuery = Query.query(Criteria.where("id").is(id));
         Document existing = mongoTemplate.findOne(channelQuery, Document.class, "community_channels");
         if (existing != null) {
+            if ("VOICE".equals(type)) {
+                Update metadata = new Update();
+                if (!existing.containsKey("rankRequirement")) metadata.set("rankRequirement", "All Ranks");
+                if (!existing.containsKey("playMode")) metadata.set("playMode", "Casual");
+                if (!metadata.getUpdateObject().isEmpty()) mongoTemplate.updateFirst(channelQuery, metadata, "community_channels");
+            }
             if ("VOICE".equals(type) && (existing.getString("livekitRoomName") == null
                     || existing.getString("livekitRoomName").isBlank())) {
                 mongoTemplate.updateFirst(channelQuery,
@@ -236,6 +242,8 @@ public class DatabaseSeeder implements CommandLineRunner {
                 "ownerUsername", "admin",
                 "locked", false,
                 "isDefault", true,
+                "rankRequirement", "All Ranks",
+                "playMode", "Casual",
                 "position", position,
                 "createdAt", Instant.now()
         );

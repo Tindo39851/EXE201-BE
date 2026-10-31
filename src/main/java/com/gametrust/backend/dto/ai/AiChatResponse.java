@@ -1,4 +1,22 @@
 package com.gametrust.backend.dto.ai;
 
-public record AiChatResponse(String reply, String model) {
+import java.util.List;
+
+public record AiChatResponse(String reply, String model, List<RoomRecommendation> recommendations) {
+    public AiChatResponse(String reply, String model) {
+        this(reply, model, List.of());
+    }
+
+    public record RoomRecommendation(
+            String id,
+            String roomName,
+            String gameId,
+            String gameName,
+            String rankRequirement,
+            String playMode,
+            int onlineCount,
+            int capacity,
+            int availableSlots,
+            String joinUrl
+    ) {}
 }

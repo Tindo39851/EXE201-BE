@@ -20,11 +20,13 @@ import org.springframework.stereotype.Service;
 
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
+import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 
 @Service
@@ -70,6 +72,119 @@ public class CommunityService {
             }
         });
         return channels;
+    }
+
+    public List<Map<String, Object>> recommendVoiceRooms(String requestText) {
+        String normalizedRequest = normalizeSearchText(requestText);
+        List<Document> games = mongoTemplate.findAll(Document.class, GAME_HUBS);
+        String requestedGameId = games.stream()
+                .filter(game -> containsGameAlias(normalizedRequest, game))
+                .map(game -> game.getString("id"))
+                .findFirst().orElse(null);
+        String requestedRank = findRequestedValue(normalizedRequest, List.of(
+                "grandmaster", "challenger", "radiant", "immortal", "ascendant", "diamond", "platinum",
+                "emerald", "gold", "silver", "bronze", "iron", "master", "heroic", "kim cuong", "bach kim",
+                "tinh anh", "cao thu", "dai cao thu", "chien tuong", "chien than", "thach dau", "bac", "dong"
+        ));
+        String requestedMode = findRequestedValue(normalizedRequest, List.of(
+                "clan internal", "rank tryhard", "tryhard", "leo rank", "climbing", "casual",
+                "sinh ton", "battle royale", "booyah", "team deathmatch", "deathmatch"
+        ));
+        int minimumAvailableSlots = extractMinimumAvailableSlots(normalizedRequest);
+
+        Query query = Query.query(Criteria.where("type").is("VOICE").and("locked").ne(true));
+        if (requestedGameId != null) query.addCriteria(Criteria.where("gameId").is(requestedGameId));
+        List<Document> rooms = mongoTemplate.find(query, Document.class, CHANNELS);
+        List<Map<String, Object>> recommendations = new ArrayList<>();
+        for (Document room : rooms) {
+            String roomId = room.getString("id");
+            if (roomId == null || room.getString("gameId") == null) continue;
+            int capacity = room.getInteger("capacity", 10);
+            int online = (int) mongoTemplate.count(Query.query(Criteria.where("roomId").is(roomId)), VOICE_MEMBERS);
+            int available = Math.max(0, capacity - online);
+            if (available < minimumAvailableSlots) continue;
+
+            String rank = room.getString("rankRequirement");
+            String mode = room.getString("playMode");
+            if (requestedRank != null && !isRankCompatible(rank, requestedRank)) continue;
+            if (requestedMode != null && !isCompatibleValue(mode, requestedMode)) continue;
+
+            Document game = games.stream().filter(g -> Objects.equals(room.getString("gameId"), g.getString("id"))).findFirst().orElse(null);
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("id", roomId);
+            item.put("roomName", room.getString("name"));
+            item.put("gameId", room.getString("gameId"));
+            item.put("gameName", game == null ? room.getString("gameId") : game.getString("name"));
+            item.put("rankRequirement", rank == null ? "All Ranks" : rank);
+            item.put("playMode", mode == null ? "Not specified" : mode);
+            item.put("onlineCount", online);
+            item.put("capacity", capacity);
+            item.put("availableSlots", available);
+            item.put("joinUrl", "/voice-lounges?joinRoom=" + roomId);
+            recommendations.add(item);
+        }
+        recommendations.sort((a, b) -> Integer.compare((int) b.get("onlineCount"), (int) a.get("onlineCount")));
+        return recommendations.stream().limit(5).toList();
+    }
+
+    private boolean containsGameAlias(String request, Document game) {
+        String id = normalizeSearchText(game.getString("id"));
+        String name = normalizeSearchText(game.getString("name"));
+        String shortName = normalizeSearchText(game.getString("shortName"));
+        if ((!id.isBlank() && request.contains(id)) || (!name.isBlank() && request.contains(name))
+                || (!shortName.isBlank() && request.contains(shortName))) return true;
+        return switch (id) {
+            case "league-of-legends" -> request.contains("lmht") || request.contains("lol") || request.contains("league");
+            case "lien-quan" -> request.contains("lien quan") || request.contains("aov");
+            case "free-fire" -> request.contains("free fire") || request.matches(".*\\bff\\b.*");
+            case "valorant" -> request.contains("valorant") || request.matches(".*\\bval\\b.*");
+            default -> false;
+        };
+    }
+
+    private String findRequestedValue(String request, List<String> values) {
+        return values.stream().filter(value -> request.contains(normalizeSearchText(value)))
+                .max((a, b) -> Integer.compare(a.length(), b.length())).orElse(null);
+    }
+
+    private int extractMinimumAvailableSlots(String request) {
+        java.util.regex.Matcher matcher = java.util.regex.Pattern
+                .compile("(?:con|it nhat|toi thieu)\\s*(\\d+)\\s*(?:cho|slot|nguoi)")
+                .matcher(request);
+        if (!matcher.find()) return 1;
+        try {
+            return Math.max(1, Math.min(50, Integer.parseInt(matcher.group(1))));
+        } catch (NumberFormatException ignored) {
+            return 1;
+        }
+    }
+
+    private boolean isCompatibleValue(String actual, String requested, String... compatibleValues) {
+        String normalizedActual = normalizeSearchText(actual);
+        if (normalizedActual.isBlank()) return false;
+        if (normalizedActual.contains(normalizeSearchText(requested))) return true;
+        for (String compatible : compatibleValues) {
+            if (normalizedActual.contains(normalizeSearchText(compatible))) return true;
+        }
+        return false;
+    }
+
+    private boolean isRankCompatible(String actual, String requested) {
+        String normalizedActual = normalizeSearchText(actual);
+        if (normalizedActual.contains("all ranks") || normalizedActual.contains("tat ca rank")) return true;
+        if (normalizedActual.contains(normalizeSearchText(requested))) return true;
+        return ("kim cuong".equals(requested) && normalizedActual.contains("diamond"))
+                || ("bach kim".equals(requested) && normalizedActual.contains("platinum"))
+                || ("bac".equals(requested) && normalizedActual.contains("silver"))
+                || ("dong".equals(requested) && normalizedActual.contains("bronze"))
+                || ("cao thu".equals(requested) && normalizedActual.contains("master"))
+                || ("thach dau".equals(requested) && normalizedActual.contains("challenger"));
+    }
+
+    private String normalizeSearchText(String value) {
+        if (value == null) return "";
+        return Normalizer.normalize(value, Normalizer.Form.NFD)
+                .replaceAll("\\p{M}+", "").toLowerCase().replace('\u0111', 'd').trim();
     }
 
     public List<Map<String, Object>> getMessages(String channelId, String before, int requestedLimit) {
@@ -143,6 +258,8 @@ public class CommunityService {
                 .append("ownerId", user.getId())
                 .append("ownerUsername", user.getUsername())
                 .append("capacity", capacity)
+                .append("rankRequirement", request.rankRequirement())
+                .append("playMode", request.playMode())
                 .append("locked", false)
                 .append("isDefault", false)
                 .append("position", position)
@@ -156,7 +273,8 @@ public class CommunityService {
     public Map<String, Object> updateVoiceRoom(String roomId, UpdateRoomRequest request, UserPrincipal user) {
         Document room = requireChannel(roomId, "VOICE");
         requireManager(room, user);
-        if (request.name() == null && request.capacity() == null && request.locked() == null) {
+        if (request.name() == null && request.capacity() == null && request.locked() == null
+                && request.rankRequirement() == null && request.playMode() == null) {
             throw new BadRequestException("At least one room field must be provided");
         }
         if (request.capacity() != null) {
@@ -169,6 +287,8 @@ public class CommunityService {
         if (request.name() != null) update.set("name", request.name().trim());
         if (request.capacity() != null) update.set("capacity", request.capacity());
         if (request.locked() != null) update.set("locked", request.locked());
+        if (request.rankRequirement() != null) update.set("rankRequirement", request.rankRequirement());
+        if (request.playMode() != null) update.set("playMode", request.playMode());
         update.set("updatedAt", Instant.now());
         mongoTemplate.updateFirst(Query.query(Criteria.where("id").is(roomId)), update, CHANNELS);
         return getRoom(roomId);

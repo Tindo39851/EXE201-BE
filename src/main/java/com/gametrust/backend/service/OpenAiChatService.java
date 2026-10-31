@@ -4,9 +4,11 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.gametrust.backend.config.OpenAiProperties;
 import com.gametrust.backend.dto.ai.AiChatRequest;
 import com.gametrust.backend.dto.ai.AiChatResponse;
+import com.gametrust.backend.dto.ai.AiChatResponse.RoomRecommendation;
 import com.gametrust.backend.exception.AiServiceException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
@@ -28,10 +30,17 @@ public class OpenAiChatService {
 
     private final RestClient restClient;
     private final OpenAiProperties properties;
+    private final CommunityService communityService;
+
+    @Autowired
+    public OpenAiChatService(RestClient.Builder restClientBuilder, OpenAiProperties properties, CommunityService communityService) {
+        this.properties = properties;
+        this.communityService = communityService;
+        this.restClient = restClientBuilder.baseUrl(properties.getBaseUrl()).build();
+    }
 
     public OpenAiChatService(RestClient.Builder restClientBuilder, OpenAiProperties properties) {
-        this.properties = properties;
-        this.restClient = restClientBuilder.baseUrl(properties.getBaseUrl()).build();
+        this(restClientBuilder, properties, null);
     }
 
     public AiChatResponse chat(AiChatRequest request) {
@@ -39,6 +48,19 @@ public class OpenAiChatService {
             throw new AiServiceException(HttpStatus.SERVICE_UNAVAILABLE,
                     "AI chat is not configured. Set OPENAI_API_KEY on the backend.");
         }
+
+        String latestUserMessage = request.messages().stream()
+                .filter(message -> "user".equals(message.role())).reduce((first, second) -> second)
+                .map(message -> message.content().trim()).orElse("");
+        boolean asksForRoom = latestUserMessage.toLowerCase().matches("(?s).*(room|ph[oò]ng|voice|lounge|lobby).*" );
+        List<RoomRecommendation> recommendations = asksForRoom && communityService != null
+                ? communityService.recommendVoiceRooms(latestUserMessage).stream().map(room -> new RoomRecommendation(
+                    String.valueOf(room.get("id")), String.valueOf(room.get("roomName")),
+                    String.valueOf(room.get("gameId")), String.valueOf(room.get("gameName")),
+                    String.valueOf(room.get("rankRequirement")), String.valueOf(room.get("playMode")),
+                    (int) room.get("onlineCount"), (int) room.get("capacity"), (int) room.get("availableSlots"),
+                    String.valueOf(room.get("joinUrl")))).toList()
+                : List.of();
 
         List<Map<String, String>> input = request.messages().stream()
                 .map(message -> Map.of(
@@ -49,7 +71,13 @@ public class OpenAiChatService {
 
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("model", properties.getModel());
-        payload.put("instructions", SYSTEM_INSTRUCTIONS);
+        String instructions = SYSTEM_INSTRUCTIONS;
+        if (asksForRoom) {
+            instructions += "\nThe user asked for an existing voice room. Use only the live room catalog below; never invent a room. "
+                    + "The backend already filtered rooms against stated criteria. If the catalog is empty, say no matching available room exists. "
+                    + "Mention that rank/play mode may be unspecified when shown that way.\nLive room catalog: " + recommendations;
+        }
+        payload.put("instructions", instructions);
         payload.put("input", input);
         payload.put("max_output_tokens", properties.getMaxOutputTokens());
 
@@ -60,7 +88,7 @@ public class OpenAiChatService {
                     .body(payload)
                     .retrieve()
                     .body(JsonNode.class);
-            return new AiChatResponse(extractOutputText(response), properties.getModel());
+            return new AiChatResponse(extractOutputText(response), properties.getModel(), recommendations);
         } catch (RestClientResponseException exception) {
             if (exception.getStatusCode().value() == 401) {
                 throw new AiServiceException(HttpStatus.BAD_GATEWAY,

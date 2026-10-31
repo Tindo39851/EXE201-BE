@@ -28,6 +28,10 @@ public final class CommunityRequests {
             @NotBlank(message = "Room name is required")
             @Size(max = 60, message = "Room name must not exceed 60 characters")
             String name,
+            @Size(max = 40, message = "Rank requirement must not exceed 40 characters")
+            String rankRequirement,
+            @Size(max = 50, message = "Play mode must not exceed 50 characters")
+            String playMode,
             @Min(value = 2, message = "Room capacity must be at least 2")
             @Max(value = 50, message = "Room capacity must not exceed 50")
             Integer capacity
@@ -40,7 +44,11 @@ public final class CommunityRequests {
             @Min(value = 2, message = "Room capacity must be at least 2")
             @Max(value = 50, message = "Room capacity must not exceed 50")
             Integer capacity,
-            Boolean locked
+            Boolean locked,
+            @Size(max = 40, message = "Rank requirement must not exceed 40 characters")
+            String rankRequirement,
+            @Size(max = 50, message = "Play mode must not exceed 50 characters")
+            String playMode
     ) {
     }
 
