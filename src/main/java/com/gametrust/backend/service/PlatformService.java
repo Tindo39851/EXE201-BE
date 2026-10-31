@@ -14,6 +14,7 @@ import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.core.query.Update;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -565,19 +566,30 @@ public class PlatformService {
         return find(new Query().with(Sort.by(Sort.Direction.ASC, "rank")), "top_rep_players");
     }
 
-    public List<Map<String, Object>> getPosts(String category) {
+    public List<Map<String, Object>> getPosts(String category, String currentUserId) {
         Query query = new Query();
         if (hasFilter(category)) {
             query.addCriteria(Criteria.where("tag").regex(Pattern.compile(Pattern.quote(category), Pattern.CASE_INSENSITIVE)));
         }
         query.with(Sort.by(Sort.Direction.DESC, "createdAt"));
-        return find(query, "social_posts");
+        List<Map<String, Object>> posts = find(query, "social_posts");
+        for (Map<String, Object> post : posts) {
+            String postId = String.valueOf(post.get("id"));
+            long actualLikes = mongoTemplate.count(Query.query(Criteria.where("postId").is(postId)), "social_post_likes");
+            long actualComments = mongoTemplate.count(Query.query(Criteria.where("postId").is(postId)), "social_post_comments");
+            post.put("likes", actualLikes);
+            post.put("comments", actualComments);
+            post.put("liked", currentUserId != null && mongoTemplate.exists(
+                    Query.query(Criteria.where("_id").is(likeId(postId, currentUserId))), "social_post_likes"));
+        }
+        return posts;
     }
 
-    public Map<String, Object> createPost(CreatePostRequest request, String username) {
+    public Map<String, Object> createPost(CreatePostRequest request, String username, String userId) {
         String id = "post_" + UUID.randomUUID().toString().substring(0, 8);
         Map<String, Object> post = doc(
                 "id", id,
+                "authorId", userId,
                 "username", username,
                 "initial", username.substring(0, 1).toUpperCase(),
                 "avatarColor", "bg-gt-cyan text-black border-gt-cyan",
@@ -598,17 +610,63 @@ public class PlatformService {
         return post;
     }
 
-    public Map<String, Object> toggleLike(String postId) {
+    public Map<String, Object> setPostLike(String postId, String userId, boolean liked) {
+        findOne("social_posts", "id", postId, "Post not found");
+        String likeId = likeId(postId, userId);
+        Query likeQuery = Query.query(Criteria.where("_id").is(likeId));
+        Document existingLike = mongoTemplate.findOne(likeQuery, Document.class, "social_post_likes");
+        if (liked && existingLike == null) {
+            Document likeDocument = new Document("_id", likeId)
+                    .append("postId", postId)
+                    .append("userId", userId)
+                    .append("createdAt", Instant.now());
+            try {
+                mongoTemplate.insert(likeDocument, "social_post_likes");
+            } catch (DuplicateKeyException concurrentLike) {
+                // The deterministic id makes repeated/concurrent likes idempotent.
+            }
+        } else if (!liked && existingLike != null) {
+            mongoTemplate.remove(likeQuery, "social_post_likes");
+        }
+        long count = mongoTemplate.count(Query.query(Criteria.where("postId").is(postId)), "social_post_likes");
+        boolean currentUserLiked = mongoTemplate.exists(likeQuery, "social_post_likes");
+        return doc("liked", currentUserLiked, "count", count);
+    }
+
+    public List<Map<String, Object>> getPostComments(String postId) {
+        findOne("social_posts", "id", postId, "Post not found");
+        Query query = Query.query(Criteria.where("postId").is(postId))
+                .with(Sort.by(Sort.Direction.ASC, "createdAt")).limit(100);
+        return find(query, "social_post_comments");
+    }
+
+    public Map<String, Object> createPostComment(String postId, String content, String username, String userId) {
+        findOne("social_posts", "id", postId, "Post not found");
+        Document comment = new Document()
+                .append("id", "comment_" + UUID.randomUUID().toString().replace("-", "").substring(0, 12))
+                .append("postId", postId)
+                .append("authorId", userId)
+                .append("username", username)
+                .append("content", content.trim())
+                .append("createdAt", Instant.now());
+        mongoTemplate.insert(comment, "social_post_comments");
+        return publicDocument(comment);
+    }
+
+    public void deletePost(String postId, String username, String userId, boolean moderator) {
         Document post = findOne("social_posts", "id", postId, "Post not found");
-        boolean liked = Boolean.TRUE.equals(post.getBoolean("liked"));
-        int likes = post.getInteger("likes", 0) + (liked ? -1 : 1);
-        likes = Math.max(0, likes);
-        mongoTemplate.updateFirst(
-                Query.query(Criteria.where("id").is(postId)),
-                new Update().set("liked", !liked).set("likes", likes),
-                "social_posts"
-        );
-        return doc("liked", !liked, "count", likes);
+        boolean isAuthor = userId.equals(post.getString("authorId"))
+                || (post.getString("authorId") == null && username.equalsIgnoreCase(post.getString("username")));
+        if (!isAuthor && !moderator) {
+            throw new org.springframework.security.access.AccessDeniedException("Only the author or a moderator can delete this post");
+        }
+        mongoTemplate.remove(Query.query(Criteria.where("postId").is(postId)), "social_post_likes");
+        mongoTemplate.remove(Query.query(Criteria.where("postId").is(postId)), "social_post_comments");
+        mongoTemplate.remove(Query.query(Criteria.where("id").is(postId)), "social_posts");
+    }
+
+    private String likeId(String postId, String userId) {
+        return postId + ":" + userId;
     }
 
     public List<Map<String, Object>> getOnlinePlayers() {

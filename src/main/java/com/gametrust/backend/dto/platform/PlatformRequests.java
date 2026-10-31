@@ -2,6 +2,7 @@ package com.gametrust.backend.dto.platform;
 
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
+import jakarta.validation.constraints.Size;
 
 import java.util.List;
 
@@ -25,9 +26,13 @@ public final class PlatformRequests {
     }
 
     public record CreatePostRequest(
-            @NotBlank String content,
-            String tag,
-            String game) {
+            @NotBlank @Size(max = 2000) String content,
+            @Size(max = 32) String tag,
+            @Size(max = 64) String game) {
+    }
+
+    public record CreateCommentRequest(
+            @NotBlank @Size(max = 1000) String content) {
     }
 
     public record CreateReviewRequest(
