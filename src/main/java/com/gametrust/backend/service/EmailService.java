@@ -16,7 +16,7 @@ public class EmailService {
 
     private final JavaMailSender mailSender;
 
-    @Value("${spring.mail.username:}")
+    @Value("${MAIL_FROM:${spring.mail.username:}}")
     private String fromEmail;
 
     @Value("${gametrust.otp.dev-mode:false}")
