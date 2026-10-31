@@ -80,9 +80,17 @@ public class SecurityConfig {
                         ).permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/livekit/webhook").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/payment/webhook").permitAll()
+                        // These endpoints return user-specific data and must never be public.
                         .requestMatchers(HttpMethod.GET,
-                                "/api/squads/**",
-                                "/api/tournaments/**",
+                                "/api/squads/me/**",
+                                "/api/squads/invites/**",
+                                "/api/tournaments/my"
+                        ).authenticated()
+                        .requestMatchers(HttpMethod.GET,
+                                "/api/squads/players",
+                                "/api/tournaments",
+                                "/api/tournaments/*",
+                                "/api/tournaments/*/bracket",
                                 "/api/clans/**",
                                 "/api/reputation/**",
                                 "/api/social/**",

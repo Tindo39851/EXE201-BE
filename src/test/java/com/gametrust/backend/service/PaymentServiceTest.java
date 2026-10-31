@@ -84,8 +84,6 @@ class PaymentServiceTest {
         CreatePaymentRequest request = new CreatePaymentRequest();
         request.setAmountVnd(50000L);
 
-        // Stub environment to simulate production profile so the rate-limit guard is active
-        when(environment.acceptsProfiles(any(org.springframework.core.env.Profiles.class))).thenReturn(true);
         when(transactionRepository.countByUserIdAndStatusAndCreatedAtAfter(anyString(), eq("PENDING"), any(Instant.class)))
                 .thenReturn(5L);
 
@@ -110,10 +108,21 @@ class PaymentServiceTest {
     void shouldRejectSimulationForDifferentUser() {
         WalletTransaction transaction = new WalletTransaction(654321L, "owner-id", "Owner", 1.97, 50000, "GT654321");
         when(environment.acceptsProfiles(any(org.springframework.core.env.Profiles.class))).thenReturn(false);
+        when(environment.getProperty("PAYMENT_DEV_SIMULATION_ENABLED", Boolean.class)).thenReturn(true);
         when(transactionRepository.findByOrderCode(654321L)).thenReturn(Optional.of(transaction));
 
         assertThrows(UnauthorizedException.class, () ->
                 paymentService.simulateSuccess(654321L, "attacker-id", false)
+        );
+    }
+
+    @Test
+    @DisplayName("Should reject payment simulation unless explicitly enabled")
+    void shouldRejectSimulationWhenDisabled() {
+        when(environment.acceptsProfiles(any(org.springframework.core.env.Profiles.class))).thenReturn(false);
+        when(environment.getProperty("PAYMENT_DEV_SIMULATION_ENABLED", Boolean.class)).thenReturn(false);
+        assertThrows(BadRequestException.class, () ->
+                paymentService.simulateSuccess(654321L, "owner-id", false)
         );
     }
 }

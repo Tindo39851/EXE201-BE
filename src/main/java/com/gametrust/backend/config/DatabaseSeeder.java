@@ -13,11 +13,13 @@ import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 
 import java.util.List;
 import java.time.Instant;
 
 @Component
+@ConditionalOnProperty(prefix = "gametrust.seed", name = "enabled", havingValue = "true")
 public class DatabaseSeeder implements CommandLineRunner {
 
     private static final List<String> COMMUNITY_GAME_IDS = List.of(

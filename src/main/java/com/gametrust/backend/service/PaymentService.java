@@ -69,8 +69,6 @@ public class PaymentService {
     }
 
     public PaymentResponse createPaymentLink(CreatePaymentRequest request, String userId, String username) {
-        boolean isProd = environment.acceptsProfiles(Profiles.of("prod", "production"));
-
         // 1. Authentication Security: Block unauthenticated / guest orders on all environments
         if (userId == null || userId.isBlank() || "guest".equalsIgnoreCase(userId)) {
             throw new UnauthorizedException("Vui lòng đăng nhập tài khoản trước khi thực hiện giao dịch nạp tiền.");
@@ -92,14 +90,12 @@ public class PaymentService {
 
         double amountUsd = Math.round((amountVnd / (double) USD_TO_VND_RATE) * 100.0) / 100.0;
 
-        // 3. Rate Limiting: Prevent spamming pending orders (only enforce on production)
+        // 3. Rate Limiting: Prevent spamming pending orders in every environment.
         String effectiveUserId = userId;
-        if (isProd) {
-            Instant fifteenMinutesAgo = Instant.now().minus(15, ChronoUnit.MINUTES);
-            long pendingCount = transactionRepository.countByUserIdAndStatusAndCreatedAtAfter(effectiveUserId, "PENDING", fifteenMinutesAgo);
-            if (pendingCount >= MAX_PENDING_ORDERS_LIMIT) {
-                throw new BadRequestException("Bạn đang có " + pendingCount + " giao dịch đang chờ xử lý. Vui lòng hoàn thành giao dịch hiện có hoặc đợi 15 phút để tạo lệnh mới.");
-            }
+        Instant fifteenMinutesAgo = Instant.now().minus(15, ChronoUnit.MINUTES);
+        long pendingCount = transactionRepository.countByUserIdAndStatusAndCreatedAtAfter(effectiveUserId, "PENDING", fifteenMinutesAgo);
+        if (pendingCount >= MAX_PENDING_ORDERS_LIMIT) {
+            throw new BadRequestException("Bạn đang có " + pendingCount + " giao dịch đang chờ xử lý. Vui lòng hoàn thành giao dịch hiện có hoặc đợi 15 phút để tạo lệnh mới.");
         }
 
         // Ensure unique orderCode AND unique description (GT + orderCode suffix must not collide)
@@ -307,8 +303,9 @@ public class PaymentService {
     }
 
     public boolean simulateSuccess(long orderCode, String callerUserId, boolean isAdmin) {
-        if (environment.acceptsProfiles(Profiles.of("prod", "production"))) {
-            throw new BadRequestException("Cửa sau mô phỏng bị vô hiệu hóa hoàn toàn trên môi trường Production vì lý do an toàn ngân hàng.");
+        if (environment.acceptsProfiles(Profiles.of("prod", "production"))
+                || !Boolean.TRUE.equals(environment.getProperty("PAYMENT_DEV_SIMULATION_ENABLED", Boolean.class))) {
+            throw new BadRequestException("Payment simulation is disabled. Enable it explicitly only in a local development environment.");
         }
 
         WalletTransaction existing = transactionRepository.findByOrderCode(orderCode)
@@ -546,53 +543,27 @@ public class PaymentService {
             log.warn("[MANUAL_RECONCILE_WARNING] PayOS query failed for order {}: {}", tx.getOrderCode(), ex.getMessage());
         }
 
-        // 5. PayOS still PENDING — in DEV mode, credit optimistically for testing
-        boolean isProd = environment.acceptsProfiles(Profiles.of("prod", "production"));
-        if (!isProd) {
-            log.info("[DEV_MANUAL_CREDIT] PayOS unconfirmed but DEV mode — crediting {} VND to user {} for ref '{}'",
-                    tx.getAmountVnd(), tx.getUserId(), normalizedRef);
-
-            Query query = new Query(Criteria.where("orderCode").is(tx.getOrderCode()).and("status").is("PENDING"));
-            Update update = new Update()
-                    .set("status", "SUCCESS")
-                    .set("paidAt", Instant.now())
-                    .set("reference", "MANUAL_UNCONFIRMED_" + normalizedRef);
-
-            WalletTransaction updatedTx = mongoTemplate.findAndModify(query, update,
-                    FindAndModifyOptions.options().returnNew(true), WalletTransaction.class);
-
-            if (updatedTx != null) {
-                ensureUserBalanceCredited(updatedTx);
-            }
-
-            double newBalance = getBalance(tx.getUserId());
-            return new PaymentStatusResponse(tx.getOrderCode(), "SUCCESS", tx.getAmountVnd(), true,
-                    newBalance, "[DEV] Giao dịch được xác nhận thủ công thành công.");
-        }
-
+        // Never credit a wallet based only on a user-entered bank transfer reference.
+        // If PayOS has not confirmed the order, leave it pending for webhook/status retry.
         return new PaymentStatusResponse(tx.getOrderCode(), "PENDING", tx.getAmountVnd(), false,
                 getBalance(tx.getUserId()),
                 "Giao dịch đang chờ xác nhận từ ngân hàng. Vui lòng thử lại sau ít phút.");
     }
 
     public List<WalletTransaction> getTransactions(String userId) {
-        if (userId != null && !userId.isBlank() && !"guest".equalsIgnoreCase(userId)) {
-            return transactionRepository.findByUserIdOrderByCreatedAtDesc(userId);
+        if (userId == null || userId.isBlank() || "guest".equalsIgnoreCase(userId)) {
+            throw new UnauthorizedException("Vui lòng đăng nhập để xem lịch sử giao dịch.");
         }
-        if (environment.acceptsProfiles(Profiles.of("prod", "production"))) {
-            return Collections.emptyList();
-        }
-        return transactionRepository.findTop10ByOrderByCreatedAtDesc();
+        return transactionRepository.findByUserIdOrderByCreatedAtDesc(userId);
     }
 
     public double getBalance(String userId) {
-        if (userId != null && !userId.isBlank() && !"guest".equalsIgnoreCase(userId)) {
-            return userRepository.findById(userId).map(User::getWalletBalance).orElse(150000.0);
+        if (userId == null || userId.isBlank() || "guest".equalsIgnoreCase(userId)) {
+            throw new UnauthorizedException("Vui lòng đăng nhập để xem số dư ví.");
         }
-        if (!environment.acceptsProfiles(Profiles.of("prod", "production"))) {
-            return userRepository.findByUsername("toàn").map(User::getWalletBalance).orElse(170000.0);
-        }
-        return 150000.0;
+        return userRepository.findById(userId)
+                .map(User::getWalletBalance)
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy tài khoản ví."));
     }
 
     public synchronized UserResponse subscribePremium(String userId, String username) {
