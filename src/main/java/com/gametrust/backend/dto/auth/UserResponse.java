@@ -1,5 +1,6 @@
 package com.gametrust.backend.dto.auth;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.gametrust.backend.entity.Role;
 import com.gametrust.backend.entity.User;
 
@@ -50,8 +51,9 @@ public class UserResponse {
                 user.getCreatedAt(),
                 user.getWalletBalance()
         );
-        response.setPremium(user.isPremium());
-        response.setPremiumTier(user.getPremiumTier());
+        boolean activePremium = user.hasActivePremium();
+        response.setPremium(activePremium);
+        response.setPremiumTier(activePremium ? user.getPremiumTier() : null);
         response.setPremiumExpiresAt(user.getPremiumExpiresAt());
         return response;
     }
@@ -128,6 +130,7 @@ public class UserResponse {
         this.walletBalance = walletBalance;
     }
 
+    @JsonProperty("isPremium")
     public boolean isPremium() {
         return isPremium;
     }

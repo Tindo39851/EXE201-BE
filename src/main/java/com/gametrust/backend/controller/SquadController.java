@@ -85,8 +85,9 @@ public class SquadController {
     @GetMapping("/ai-recommendations")
     public ApiResponse<Map<String, Object>> aiRecommendations(
             @RequestParam(required = false, defaultValue = "Valorant") String game,
+            @RequestParam(required = false) String preference,
             @AuthenticationPrincipal UserDetails user) {
         String username = user != null ? user.getUsername() : null;
-        return ApiResponse.success(service.getAiRoomRecommendations(username, game));
+        return ApiResponse.success(service.getAiRoomRecommendations(username, game, preference));
     }
 }

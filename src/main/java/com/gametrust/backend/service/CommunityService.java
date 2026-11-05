@@ -28,6 +28,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.Set;
 
 @Service
 public class CommunityService {
@@ -37,6 +38,13 @@ public class CommunityService {
     private static final String MESSAGES = "channel_messages";
     private static final String VOICE_MEMBERS = "voice_room_members";
     private static final String VOICE_MODERATION = "voice_room_moderation";
+    private static final Set<String> ROOM_PERSONALITY_TAGS = Set.of(
+            "Vui vẻ", "Chill", "Nói nhiều", "Có mic", "Tryhard",
+            "Căng thẳng", "Chửi tục nhiều", "Không toxic", "Ít nói"
+    );
+    private static final Set<String> ROOM_VISIBILITIES = Set.of(
+            "Public", "Clan Only", "Rank Tryhard", "Private"
+    );
 
     private final MongoTemplate mongoTemplate;
     private final LiveKitRoomAdminService liveKitRoomAdminService;
@@ -247,6 +255,12 @@ public class CommunityService {
     public Map<String, Object> createVoiceRoom(String gameId, CreateRoomRequest request, UserPrincipal user) {
         findOne(GAME_HUBS, "id", gameId, "Game not found");
         int capacity = request.capacity() == null ? 10 : request.capacity();
+        List<String> personalityTags = sanitizePersonalityTags(request.personalityTags());
+        String visibility = optionalTrimmed(request.visibility());
+        if (visibility == null) visibility = "Public";
+        if (!ROOM_VISIBILITIES.contains(visibility)) {
+            throw new BadRequestException("Unsupported room visibility");
+        }
         long position = mongoTemplate.count(Query.query(Criteria.where("gameId").is(gameId)), CHANNELS) + 1;
         Document room = new Document()
                 .append("id", "room_" + shortId())
@@ -258,8 +272,12 @@ public class CommunityService {
                 .append("ownerId", user.getId())
                 .append("ownerUsername", user.getUsername())
                 .append("capacity", capacity)
-                .append("rankRequirement", request.rankRequirement())
-                .append("playMode", request.playMode())
+                .append("tag", optionalTrimmed(request.tag()))
+                .append("rankRequirement", optionalTrimmed(request.rankRequirement()))
+                .append("playMode", optionalTrimmed(request.playMode()))
+                .append("visibility", visibility)
+                .append("personalityTags", personalityTags)
+                .append("description", optionalTrimmed(request.description()))
                 .append("locked", false)
                 .append("isDefault", false)
                 .append("position", position)
@@ -268,6 +286,28 @@ public class CommunityService {
         Map<String, Object> result = publicDocument(room);
         result.put("onlineCount", 0);
         return result;
+    }
+
+    private List<String> sanitizePersonalityTags(List<String> requestedTags) {
+        if (requestedTags == null || requestedTags.isEmpty()) return List.of();
+        List<String> tags = requestedTags.stream()
+                .map(this::optionalTrimmed)
+                .filter(tag -> tag != null && !tag.isBlank())
+                .distinct()
+                .toList();
+        if (tags.size() > 5) {
+            throw new BadRequestException("A room can have at most 5 personality tags");
+        }
+        if (!ROOM_PERSONALITY_TAGS.containsAll(tags)) {
+            throw new BadRequestException("Unsupported room personality tag");
+        }
+        return tags;
+    }
+
+    private String optionalTrimmed(String value) {
+        if (value == null) return null;
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     public Map<String, Object> updateVoiceRoom(String roomId, UpdateRoomRequest request, UserPrincipal user) {

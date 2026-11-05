@@ -17,6 +17,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 
 import java.util.List;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 
 @Component
 @ConditionalOnProperty(prefix = "gametrust.seed", name = "enabled", havingValue = "true")
@@ -53,11 +54,21 @@ public class DatabaseSeeder implements CommandLineRunner {
             admin.setReputationScore(99);
             userRepository.save(admin);
         }
-        if (!userRepository.existsByUsername("demo")) {
-            User demo = new User("demo", "demo@gametrust.local", passwordEncoder.encode("Demo123!"), Role.MEMBER);
-            demo.setReputationScore(91);
-            userRepository.save(demo);
+        User demo = userRepository.findByUsername("demo")
+                .orElseGet(() -> new User(
+                        "demo",
+                        "demo@gametrust.local",
+                        passwordEncoder.encode("Demo123!"),
+                        Role.MEMBER
+                ));
+        demo.setReputationScore(91);
+        demo.setPremium(true);
+        demo.setPremiumTier("PREMIUM");
+        if (demo.getPremiumExpiresAt() == null || !demo.getPremiumExpiresAt().isAfter(Instant.now())) {
+            demo.setPremiumExpiresAt(Instant.now().plus(365, ChronoUnit.DAYS));
         }
+        demo.touch();
+        userRepository.save(demo);
     }
 
     private void seedPlayers() {

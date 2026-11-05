@@ -24,10 +24,13 @@ import org.slf4j.LoggerFactory;
 import org.springframework.web.client.RestClient;
 
 import java.time.Instant;
+import java.text.Normalizer;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Pattern;
 
@@ -35,6 +38,10 @@ import java.util.regex.Pattern;
 public class PlatformService {
 
     private static final Logger log = LoggerFactory.getLogger(PlatformService.class);
+    private static final Set<String> ROOM_SEARCH_STOP_WORDS = Set.of(
+            "toi", "muon", "tim", "phong", "choi", "voi", "mot", "nhung", "cac",
+            "co", "la", "va", "de", "cho", "cua", "minh", "nao", "kieu"
+    );
 
     private final MongoTemplate mongoTemplate;
     private final OpenAiProperties openAiProperties;
@@ -722,7 +729,12 @@ public class PlatformService {
         return result;
     }
 
-    public Map<String, Object> getAiRoomRecommendations(String username, String game) {
+    public Map<String, Object> getAiRoomRecommendations(String username, String game, String preference) {
+        String cleanPreference = preference == null ? "" : preference.trim();
+        if (cleanPreference.length() > 300) {
+            throw new BadRequestException("Mô tả phòng mong muốn không được vượt quá 300 ký tự.");
+        }
+
         boolean isPremium = false;
         if (username != null && !username.isBlank()) {
             Document userDoc = mongoTemplate.findOne(
@@ -739,6 +751,7 @@ public class PlatformService {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("isPremium", isPremium);
         result.put("game", game != null ? game : "Valorant");
+        result.put("requestedPreference", cleanPreference);
 
         if (!isPremium) {
             result.put("unlocked", false);
@@ -807,7 +820,15 @@ public class PlatformService {
             double fairPlayScore = Math.min(99.9, Math.max(92.0, 94.0 + (ownerRep - 80.0) * 0.28));
             double completionRate = Math.min(100.0, Math.max(94.0, 96.0 + (ownerRep - 80.0) * 0.18));
             double retentionScore = Math.min(99.5, 93.0 + (online > 0 ? 5.0 : 0.0));
-            double compositeScore = (fairPlayScore * 0.4) + (completionRate * 0.3) + (retentionScore * 0.2) + (online > 0 && online < capacity ? 10.0 : 0.0);
+            double qualityScore = (fairPlayScore * 0.4) + (completionRate * 0.3)
+                    + (retentionScore * 0.2) + (online > 0 && online < capacity ? 10.0 : 0.0);
+            PreferenceMatch preferenceMatch = scoreRoomPreference(cleanPreference, r);
+            double compositeScore = cleanPreference.isBlank()
+                    ? qualityScore
+                    : (qualityScore * 0.55) + (preferenceMatch.score() * 0.45);
+
+            String description = roomString(r, "description");
+            List<String> personalityTags = roomStringList(r, "personalityTags");
 
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("id", roomId);
@@ -821,6 +842,10 @@ public class PlatformService {
             item.put("antiFraudVerified", true);
             item.put("slotsAvailable", online + "/" + capacity);
             item.put("voiceStatus", "LiveKit HD 128kbps Active");
+            item.put("description", description);
+            item.put("personalityTags", personalityTags);
+            item.put("preferenceMatchScore", Math.round(preferenceMatch.score() * 10.0) / 10.0);
+            item.put("matchedTraits", preferenceMatch.matchedTraits());
             item.put("compositeScore", compositeScore);
             scoredRooms.add(item);
         }
@@ -832,9 +857,24 @@ public class PlatformService {
             String rName = (String) rec.get("roomName");
             double fp = (Double) rec.get("fairPlayScore");
             double cr = (Double) rec.get("completionRate");
-            String aiReason = callOpenAiForReasoning(username, (String) rec.get("game"), rName, fp, cr);
+            @SuppressWarnings("unchecked")
+            List<String> traits = (List<String>) rec.getOrDefault("matchedTraits", List.of());
+            @SuppressWarnings("unchecked")
+            List<String> personalityTags = (List<String>) rec.getOrDefault("personalityTags", List.of());
+            String aiReason = callOpenAiForReasoning(
+                    username,
+                    (String) rec.get("game"),
+                    rName,
+                    fp,
+                    cr,
+                    cleanPreference,
+                    (String) rec.getOrDefault("description", ""),
+                    personalityTags
+            );
             if (aiReason == null || aiReason.isBlank()) {
-                aiReason = String.format("Phòng có độ tin cậy Fair-play %.1f%%, tỷ lệ hoàn thành trận %.1f%%, chủ phòng xác thực, không có lịch sử toxic.", fp, cr);
+                aiReason = traits.isEmpty()
+                        ? String.format("Phòng có độ tin cậy Fair-play %.1f%%, tỷ lệ hoàn thành trận %.1f%%, chủ phòng xác thực.", fp, cr)
+                        : String.format("Phù hợp yêu cầu %s; Fair-play %.1f%% và tỷ lệ hoàn thành %.1f%%.", String.join(", ", traits), fp, cr);
             }
             rec.put("aiReason", aiReason);
         }
@@ -843,7 +883,15 @@ public class PlatformService {
         return result;
     }
 
-    private String callOpenAiForReasoning(String username, String game, String roomName, double fairPlay, double completionRate) {
+    private String callOpenAiForReasoning(
+            String username,
+            String game,
+            String roomName,
+            double fairPlay,
+            double completionRate,
+            String preference,
+            String description,
+            List<String> personalityTags) {
         if (!openAiProperties.isConfigured()) {
             return null;
         }
@@ -851,11 +899,18 @@ public class PlatformService {
         try {
             Map<String, Object> payload = new LinkedHashMap<>();
             payload.put("model", openAiProperties.getModel());
-            payload.put("instructions", "You are GameTrust Neural Matcher AI. Explain concisely in Vietnamese (1 sentence, max 25 words) why this room is recommended for a Premium gamer based on fair-play, completion rate, and verified anti-fraud.");
+            payload.put("instructions", "You are GameTrust Neural Matcher AI. Explain concisely in Vietnamese (1 sentence, max 30 words) why this room matches the user's stated preference. Only use supplied room metadata, fair-play, completion rate, and verified anti-fraud; never invent room traits.");
             payload.put("input", List.of(Map.of(
                     "role", "user",
-                    "content", String.format("User: %s, Game: %s, Room: %s, FairPlay: %.1f%%, Completion: %.1f%%",
-                            username != null ? username : "Operative", game != null ? game : "Valorant", roomName, fairPlay, completionRate)
+                    "content", String.format("User: %s, Game: %s, Wanted room: %s, Room: %s, Room description: %s, Personality tags: %s, FairPlay: %.1f%%, Completion: %.1f%%",
+                            username != null ? username : "Operative",
+                            game != null ? game : "Valorant",
+                            preference.isBlank() ? "Không nêu" : preference,
+                            roomName,
+                            description.isBlank() ? "Không có" : description,
+                            personalityTags,
+                            fairPlay,
+                            completionRate)
             )));
             payload.put("max_output_tokens", 100);
 
@@ -880,6 +935,89 @@ public class PlatformService {
             log.warn("[AI_RECOMMENDATION] OpenAI real-time reasoning call failed: {}. Falling back to heuristic reasoning.", ex.getMessage());
         }
         return null;
+    }
+
+    private PreferenceMatch scoreRoomPreference(String preference, Document room) {
+        if (preference == null || preference.isBlank()) {
+            return new PreferenceMatch(0.0, List.of());
+        }
+
+        String normalizedPreference = normalizeSearchText(preference);
+        List<String> allTerms = List.of(normalizedPreference.split("\\s+"));
+        List<String> terms = allTerms.stream()
+                .filter(term -> term.length() >= 2 && !ROOM_SEARCH_STOP_WORDS.contains(term))
+                .distinct()
+                .toList();
+        if (terms.isEmpty()) {
+            terms = allTerms.stream().filter(term -> term.length() >= 2).distinct().toList();
+        }
+
+        List<String> personalityTags = roomStringList(room, "personalityTags");
+        List<String> searchableParts = new ArrayList<>();
+        searchableParts.add(roomString(room, "name"));
+        searchableParts.add(roomString(room, "description"));
+        searchableParts.add(roomString(room, "playMode"));
+        searchableParts.add(roomString(room, "rankRequirement"));
+        searchableParts.add(roomString(room, "tag"));
+        searchableParts.addAll(personalityTags);
+        String searchable = normalizeSearchText(String.join(" ", searchableParts));
+
+        long matchedTermCount = terms.stream().filter(searchable::contains).count();
+        double score = terms.isEmpty() ? 0.0 : (matchedTermCount * 85.0 / terms.size());
+        if (!normalizedPreference.isBlank() && searchable.contains(normalizedPreference)) {
+            score += 15.0;
+        }
+
+        Set<String> matchedTraits = new HashSet<>();
+        for (String tag : personalityTags) {
+            String normalizedTag = normalizeSearchText(tag);
+            if (terms.stream().anyMatch(normalizedTag::contains)
+                    || (!normalizedTag.isBlank() && normalizedPreference.contains(normalizedTag))) {
+                matchedTraits.add(tag);
+            }
+        }
+        for (String field : List.of("playMode", "rankRequirement", "tag")) {
+            String value = roomString(room, field);
+            String normalizedValue = normalizeSearchText(value);
+            if (!value.isBlank() && terms.stream().anyMatch(normalizedValue::contains)) {
+                matchedTraits.add(value);
+            }
+        }
+        if (!roomString(room, "description").isBlank() && matchedTermCount > 0) {
+            matchedTraits.add("mô tả phòng");
+        }
+
+        return new PreferenceMatch(Math.min(100.0, score), matchedTraits.stream().sorted().toList());
+    }
+
+    private String normalizeSearchText(String value) {
+        if (value == null) {
+            return "";
+        }
+        return Normalizer.normalize(value, Normalizer.Form.NFD)
+                .replaceAll("\\p{M}+", "")
+                .toLowerCase()
+                .replaceAll("[^a-z0-9]+", " ")
+                .trim();
+    }
+
+    private String roomString(Document room, String field) {
+        Object value = room.get(field);
+        return value == null ? "" : String.valueOf(value).trim();
+    }
+
+    private List<String> roomStringList(Document room, String field) {
+        Object value = room.get(field);
+        if (!(value instanceof List<?> values)) {
+            return List.of();
+        }
+        return values.stream()
+                .filter(item -> item != null && !String.valueOf(item).isBlank())
+                .map(item -> String.valueOf(item).trim())
+                .toList();
+    }
+
+    private record PreferenceMatch(double score, List<String> matchedTraits) {
     }
 
     public static Map<String, Object> doc(Object... pairs) {

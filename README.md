@@ -215,8 +215,8 @@ The first AI milestone is an authenticated text chat backed by the OpenAI Respon
 
 | Method | Endpoint | Access | Behavior |
 |---|---|---|---|
-| GET | `/api/ai/status` | Authenticated | Return whether AI is configured and the selected model |
-| POST | `/api/ai/chat` | Authenticated | Send up to 20 user/assistant messages and return the AI reply |
+| GET | `/api/ai/status` | Premium or Admin | Return whether AI is configured and the selected model |
+| POST | `/api/ai/chat` | Premium or Admin | Send up to 20 user/assistant messages and return the AI reply |
 
 Backend environment variables:
 

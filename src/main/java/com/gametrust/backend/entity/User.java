@@ -147,6 +147,10 @@ public class User {
         isPremium = premium;
     }
 
+    public boolean hasActivePremium() {
+        return isPremium && (premiumExpiresAt == null || premiumExpiresAt.isAfter(Instant.now()));
+    }
+
     public String getPremiumTier() {
         return premiumTier;
     }
