@@ -67,6 +67,7 @@ public class SecurityConfig {
                             response.getWriter().write("{\"status\":403,\"message\":\"Access denied\"}");
                         }))
                 .authorizeHttpRequests(auth -> auth
+                        .requestMatchers(HttpMethod.GET, "/health").permitAll()
                         // Public authentication endpoints
                         .requestMatchers(
                                 "/api/auth/register",
@@ -145,3 +146,4 @@ public class SecurityConfig {
         return source;
     }
 }
+
